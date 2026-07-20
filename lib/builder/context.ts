@@ -7,9 +7,26 @@ import type {
   ToolResultEvent,
   ToolResultEventResult,
 } from "./events.js";
-import type { InputCondition, PreExecutionRule, PostExecutionRule, RewriteFn, RewriteBuilder } from "./rules.js";
-import type { ToolMatcherBuilder, ActionBuilder, TimingBuilder, PostExecutionActionBuilder, MatcherBuilder } from "./builders.js";
-import { createRewriteBuilder, createMatcherBuilder, createTimingBuilder, tagged, extractTextFromContent, interpolateCommand } from "./builders.js";
+import type {
+  InputCondition,
+  PreExecutionRule,
+  PostExecutionRule,
+  ErrorRule,
+  RewriteFn,
+} from "./rules.js";
+import type {
+  ToolMatcherBuilder,
+  ActionBuilder,
+  PostExecutionActionBuilder,
+  MatcherBuilder,
+  ErrorActionBuilder,
+} from "./builders.js";
+import {
+  createMatcherBuilder,
+  tagged,
+  extractTextFromContent,
+  interpolateCommand,
+} from "./builders.js";
 import {
   word,
   seq,
@@ -31,9 +48,9 @@ import { tokenizeSql } from "../matchers/tokenizers/sql.js";
 import { tokenizeNushell } from "../matchers/tokenizers/nushell.js";
 
 /**
- * Pre-execution builder after .input() — supports .block, .confirm, .run, .output
+ * Pre-execution builder after .input() — supports .block, .confirm, .run, .output, .error
  */
-interface PreExecutionInputBuilder {
+interface PreExecutionInputBuilder extends ToolMatcherBuilder {
   /** Block the call. */
   block(reason: string): void;
   /** Require confirmation. */
@@ -42,8 +59,6 @@ interface PreExecutionInputBuilder {
   run(command: string): void;
   /** Switch to post-execution with an output matcher. */
   output(matcher: Matcher): PostExecutionInputBuilder;
-  /** Add another input condition. */
-  input(key: string, matcher: Matcher): PreExecutionInputBuilder;
 }
 
 /**
@@ -68,17 +83,16 @@ interface PostExecutionInputBuilder {
 export class GuardrailContext {
   readonly preRules: PreExecutionRule[] = [];
   readonly postRules: PostExecutionRule[] = [];
+  readonly errorRules: ErrorRule[] = [];
 
   readonly bash: MatcherBuilder;
   readonly nu: MatcherBuilder;
   readonly sql: MatcherBuilder;
-  readonly rewrite: RewriteBuilder;
 
   constructor() {
     this.bash = createMatcherBuilder(tokenizeBash);
     this.nu = createMatcherBuilder(tokenizeNushell);
     this.sql = createMatcherBuilder(tokenizeSql);
-    this.rewrite = createRewriteBuilder();
   }
 
   regex(pattern: RegExp): Matcher {
@@ -87,9 +101,9 @@ export class GuardrailContext {
 
   glob(pattern: string): Matcher {
     const picomatch = require("picomatch");
-    const pm = picomatch(pattern, { matchBase: true });
+    const pm = picomatch(pattern, { matchBase: true, dot: true });
     return {
-      match: (tokens: Token[]) => tokens.some(t => pm(t.value)),
+      match: (tokens: Token[]) => tokens.some((t) => pm(t.value)),
       tryMatch: (tokens: Token[], from: number) => {
         for (let i = from; i < tokens.length; i++) {
           if (pm(tokens[i].value)) return { ok: true, consumed: i - from + 1 };
@@ -99,18 +113,42 @@ export class GuardrailContext {
     };
   }
 
-  anyToken(): Matcher { return anyToken(); }
-  path(): Matcher { return path(); }
-  repeat(m: Matcher): Matcher { return repeat(m); }
-  repeat1(m: Matcher): Matcher { return repeat1(m); }
-  opt(m: Matcher): Matcher { return opt(m); }
-  exact(n: number): Matcher { return exact(n); }
-  prefixed(prefix: string): Matcher { return prefixed(prefix); }
-  anyOf(...matchers: Matcher[]): Matcher { return anyOf(...matchers); }
-  seq(...matchers: Matcher[]): Matcher { return seq(...matchers); }
-  star(): Matcher { return star(); }
-  spread(): Matcher { return spread(); }
-  contains(...inner: Matcher[]): Matcher { return contains(...inner); }
+  anyToken(): Matcher {
+    return anyToken();
+  }
+  path(): Matcher {
+    return path();
+  }
+  repeat(m: Matcher): Matcher {
+    return repeat(m);
+  }
+  repeat1(m: Matcher): Matcher {
+    return repeat1(m);
+  }
+  opt(m: Matcher): Matcher {
+    return opt(m);
+  }
+  exact(n: number): Matcher {
+    return exact(n);
+  }
+  prefixed(prefix: string): Matcher {
+    return prefixed(prefix);
+  }
+  anyOf(...matchers: Matcher[]): Matcher {
+    return anyOf(...matchers);
+  }
+  seq(...matchers: Matcher[]): Matcher {
+    return seq(...matchers);
+  }
+  star(): Matcher {
+    return star();
+  }
+  spread(): Matcher {
+    return spread();
+  }
+  contains(...inner: Matcher[]): Matcher {
+    return contains(...inner);
+  }
 
   /**
    * Scope to a specific tool by name.
@@ -118,16 +156,34 @@ export class GuardrailContext {
   tool(toolName: string): ToolMatcherBuilder {
     const conditions: InputCondition[] = [];
 
-    // Pre-execution input builder: after .input(), can .block/.confirm/.run/.output
+    // Pre-execution input builder: after .input(), can .block/.confirm/.run/.output/.error
     const preBuilder: PreExecutionInputBuilder = {
       block: (reason) => {
-        this.preRules.push({ toolName, inputConditions: [...conditions], timing: "before", action: "block", reason });
+        this.preRules.push({
+          toolName,
+          inputConditions: [...conditions],
+          timing: "before",
+          action: "block",
+          reason,
+        });
       },
       confirm: (reason) => {
-        this.preRules.push({ toolName, inputConditions: [...conditions], timing: "before", action: "confirm", reason });
+        this.preRules.push({
+          toolName,
+          inputConditions: [...conditions],
+          timing: "before",
+          action: "confirm",
+          reason,
+        });
       },
       run: (command) => {
-        this.preRules.push({ toolName, inputConditions: [...conditions], timing: "before", action: "run", command });
+        this.preRules.push({
+          toolName,
+          inputConditions: [...conditions],
+          timing: "before",
+          action: "run",
+          command,
+        });
       },
       output: (matcher: Matcher) => {
         // Return a post-execution input builder
@@ -137,26 +193,108 @@ export class GuardrailContext {
         conditions.push({ key, matcher });
         return preBuilder;
       },
+      error: (matcher: Matcher) => {
+        return createErrorBuilder(matcher);
+      },
     };
 
     // Post-execution input builder: after .output(), can .block/.confirm/.run/.rewrite
-    const createPostInputBuilder = (outputMatcher: Matcher): PostExecutionInputBuilder => {
+    const createPostInputBuilder = (
+      outputMatcher: Matcher,
+    ): PostExecutionInputBuilder => {
       return {
         block: (reason) => {
-          this.postRules.push({ toolName, inputConditions: [...conditions], outputMatcher, timing: "after", action: "block", reason });
+          this.postRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "block",
+            reason,
+          });
         },
         confirm: (reason) => {
-          this.postRules.push({ toolName, inputConditions: [...conditions], outputMatcher, timing: "after", action: "confirm", reason });
+          this.postRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "confirm",
+            reason,
+          });
         },
         run: (command) => {
-          this.postRules.push({ toolName, inputConditions: [...conditions], outputMatcher, timing: "after", action: "run", command });
+          this.postRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "run",
+            command,
+          });
         },
         rewrite: (fn) => {
-          this.postRules.push({ toolName, inputConditions: [...conditions], outputMatcher, timing: "after", action: "rewrite", rewriteFn: fn });
+          this.postRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "rewrite",
+            rewriteFn: fn,
+          });
         },
         input: (key, matcher) => {
           conditions.push({ key, matcher });
           return createPostInputBuilder(outputMatcher);
+        },
+      };
+    };
+
+    // Error input builder: after .error(), can .block/.confirm/.run/.rewrite
+    const createErrorBuilder = (outputMatcher: Matcher): ErrorActionBuilder => {
+      const conditions: InputCondition[] = [];
+
+      return {
+        block: (reason) => {
+          this.errorRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "error_block",
+            reason,
+          });
+        },
+        confirm: (reason) => {
+          this.errorRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "error_confirm",
+            reason,
+          });
+        },
+        run: (command) => {
+          this.errorRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "error_run",
+            reason: command,
+            command,
+          });
+        },
+        rewrite: (fn) => {
+          this.errorRules.push({
+            toolName,
+            inputConditions: [...conditions],
+            outputMatcher,
+            timing: "after",
+            action: "error_rewrite",
+            rewriteFn: fn,
+          });
         },
       };
     };
@@ -168,6 +306,9 @@ export class GuardrailContext {
       },
       output: (matcher: Matcher) => {
         return createPostInputBuilder(matcher);
+      },
+      error: (matcher: Matcher) => {
+        return createErrorBuilder(matcher);
       },
     };
 
@@ -184,12 +325,32 @@ export class GuardrailContext {
     return undefined;
   }
 
-  private handlePreAction(rule: PreExecutionRule): ToolCallEventResult | undefined {
+  /** Evaluate error rules against a tool_result event (only when isError is true). */
+  matchError(event: ToolResultEvent): ToolResultEventResult | undefined {
+    if (!event.isError) return undefined;
+    for (const rule of this.errorRules) {
+      if (rule.toolName !== event.toolName) continue;
+      if (!this.evaluateConditions(rule.inputConditions, event.input)) continue;
+      if (!this.matchesOutputRule(rule, event)) continue;
+      return this.handleErrorAction(rule, event);
+    }
+    return undefined;
+  }
+
+  private handlePreAction(
+    rule: PreExecutionRule,
+  ): ToolCallEventResult | undefined {
     switch (rule.action) {
       case "block":
-        return { block: true, reason: rule.reason ?? `Blocked by guardrail [${rule.toolName}]` };
+        return {
+          block: true,
+          reason: rule.reason ?? `Blocked by guardrail [${rule.toolName}]`,
+        };
       case "confirm":
-        return { block: true, reason: rule.reason ?? `Confirmation required: ${rule.toolName}` };
+        return {
+          block: true,
+          reason: rule.reason ?? `Confirmation required: ${rule.toolName}`,
+        };
       case "run":
         return rule.timing === "before" && rule.command
           ? { block: true, reason: `Command blocked: ${rule.command}` }
@@ -204,27 +365,57 @@ export class GuardrailContext {
     for (const rule of this.postRules) {
       if (rule.toolName !== event.toolName) continue;
       if (!this.evaluateConditions(rule.inputConditions, event.input)) continue;
-      if (!this.matchesOutput(rule, event)) continue;
+      if (!this.matchesOutputRule(rule, event)) continue;
       return this.handlePostAction(rule, event);
     }
     return undefined;
   }
 
-  private matchesOutput(rule: PostExecutionRule, event: ToolResultEvent): boolean {
-    if (!rule.outputMatcher || !event.content) return true;
+  private matchesOutputRule(
+    rule: PostExecutionRule | ErrorRule,
+    event: ToolResultEvent,
+  ): boolean {
+    const outputMatcher = (rule as PostExecutionRule).outputMatcher;
+    if (!outputMatcher || !event.content) return true;
     const text = extractTextFromContent(event.content);
-    const m = rule.outputMatcher as Matcher & { __tokenizer: Tokenizer };
+    const m = outputMatcher as Matcher & {
+      __tokenizer?: Tokenizer;
+      __isRegex?: boolean;
+      __patterns?: RegExp[];
+    };
+
+    // Regex matchers test against the full text to handle patterns that span
+    // token boundaries (e.g. /segfault|signal 11/i matching "signal 11")
+    if (m.__isRegex && m.__patterns) {
+      return m.__patterns.some((p: RegExp) => {
+        p.lastIndex = 0;
+        return p.test(text);
+      });
+    }
+
     const segments = (m.__tokenizer ?? tokenizeBash)(text);
     if (segments.length === 0) return false;
     return m.match(segments[0]);
   }
 
-  private handlePostAction(rule: PostExecutionRule, event: ToolResultEvent): ToolResultEventResult | undefined {
+  private handlePostAction(
+    rule: PostExecutionRule,
+    event: ToolResultEvent,
+  ): ToolResultEventResult | undefined {
     switch (rule.action) {
       case "block":
-        return { block: true, reason: rule.reason ?? `Result blocked by guardrail [${rule.toolName}]` };
+        return {
+          block: true,
+          reason:
+            rule.reason ?? `Result blocked by guardrail [${rule.toolName}]`,
+        };
       case "confirm":
-        return { block: true, reason: rule.reason ?? `Confirmation required for result [${rule.toolName}]` };
+        return {
+          block: true,
+          reason:
+            rule.reason ??
+            `Confirmation required for result [${rule.toolName}]`,
+        };
       case "run":
         return this.handlePostRun(rule, event);
       case "rewrite":
@@ -234,14 +425,61 @@ export class GuardrailContext {
     }
   }
 
-  private handlePostRun(rule: PostExecutionRule, event: ToolResultEvent): ToolResultEventResult | undefined {
+  private handlePostRun(
+    rule: PostExecutionRule,
+    event: ToolResultEvent,
+  ): ToolResultEventResult | undefined {
     if (!rule.command) return undefined;
     const interpolated = interpolateCommand(rule.command, event.input);
     const text = extractTextFromContent(event.content);
-    return { content: [{ type: "text", text: `${text}\n\n⚠ Guardrail command: ${interpolated}` }] };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${text}\n\n⚠ Guardrail command: ${interpolated}`,
+        },
+      ],
+    };
   }
 
-  private handlePostRewrite(rule: PostExecutionRule, event: ToolResultEvent): ToolResultEventResult | undefined {
+  private handlePostRewrite(
+    rule: PostExecutionRule,
+    event: ToolResultEvent,
+  ): ToolResultEventResult | undefined {
+    if (!rule.rewriteFn) return undefined;
+    return rule.rewriteFn(event);
+  }
+
+  private handleErrorAction(
+    rule: ErrorRule,
+    event: ToolResultEvent,
+  ): ToolResultEventResult | undefined {
+    switch (rule.action) {
+      case "error_block":
+        return {
+          block: true,
+          reason:
+            rule.reason ?? `Error blocked by guardrail [${rule.toolName}]`,
+        };
+      case "error_confirm":
+        return {
+          block: true,
+          reason:
+            rule.reason ?? `Confirmation required for error [${rule.toolName}]`,
+        };
+      case "error_run":
+        return this.handlePostRun(rule, event);
+      case "error_rewrite":
+        return this.handlePostRewriteError(rule, event);
+      default:
+        return undefined;
+    }
+  }
+
+  private handlePostRewriteError(
+    rule: ErrorRule,
+    event: ToolResultEvent,
+  ): ToolResultEventResult | undefined {
     if (!rule.rewriteFn) return undefined;
     return rule.rewriteFn(event);
   }
@@ -261,10 +499,12 @@ export class GuardrailContext {
       // by the bash tokenizer)
       if ((matcher as any).__isRegex) {
         const patterns = (matcher as any).__patterns;
-        if (!patterns.some((p: RegExp) => {
-          p.lastIndex = 0;
-          return p.test(text);
-        })) {
+        if (
+          !patterns.some((p: RegExp) => {
+            p.lastIndex = 0;
+            return p.test(text);
+          })
+        ) {
           return false;
         }
         continue;
