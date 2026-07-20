@@ -1,0 +1,42 @@
+{
+  "name": "pi-guardrails",
+  "version": "1.0.0",
+  "description": "Guardrails extension for pi-coding-agent - provides command blocking and confirmation based on patterns",
+  "scripts": {
+    "lint": "bun ./node_modules/eslint/bin/eslint.js",
+    "test": "vitest run --coverage",
+    "tsc": "tsc --noEmit"
+  },
+  "keywords": [
+    "guardrails",
+    "security",
+    "blocking",
+    "confirmation",
+    "pi-coding-agent",
+    "extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.10",
+    "@leeoniya/ufuzzy": "^1.0.19",
+    "@types/shell-quote": "^1.7.5",
+    "picomatch": "^4.0.5",
+    "shell-quote": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/picomatch": "^4.0.3",
+    "eslint": "^10.7.0",
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.64.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "vitest": "^4.1.10"
+  }
+}
