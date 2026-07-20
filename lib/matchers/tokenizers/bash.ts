@@ -36,9 +36,14 @@ function parseShell(command: string): ReturnType<typeof parse> {
     // shell-quote treats ? and * as glob chars even in URLs.
     // If the entire input was parsed as a single glob pattern, fall back
     // to simple whitespace splitting (the input is likely a URL or path).
-    if (result.length === 1 && typeof result[0] === "object"
-        && "pattern" in result[0] && "op" in result[0]
-        && result[0].op === "glob" && command.includes("://")) {
+    if (
+      result.length === 1 &&
+      typeof result[0] === "object" &&
+      "pattern" in result[0] &&
+      "op" in result[0] &&
+      result[0].op === "glob" &&
+      command.includes("://")
+    ) {
       return command.split(/\s+/).filter(Boolean);
     }
     return result;
@@ -61,7 +66,16 @@ function processToken(
   if (isOperator(token)) {
     handleOperator(token.op, current, segmentSplitters, segments);
   } else if (typeof token === "string") {
-    current.push(makeToken(token, ENV_VAR_ASSIGNMENT.test(token) ? "env" : COMMAND_WRAPPERS.has(token) ? "wrapper" : "word"));
+    current.push(
+      makeToken(
+        token,
+        ENV_VAR_ASSIGNMENT.test(token)
+          ? "env"
+          : COMMAND_WRAPPERS.has(token)
+            ? "wrapper"
+            : "word",
+      ),
+    );
   } else if (typeof token === "object" && "comment" in token) {
     // shell-quote treats # as comment start. Append the #comment to the preceding word
     // so that "nixpkgs#foo" stays as "nixpkgs#foo" instead of being split into "nixpkgs" + comment.
@@ -70,7 +84,9 @@ function processToken(
       if (last.type === "word") {
         last.value += "#" + (token as { comment: string }).comment;
       } else {
-        current.push(makeToken("#" + (token as { comment: string }).comment, "word"));
+        current.push(
+          makeToken("#" + (token as { comment: string }).comment, "word"),
+        );
       }
     }
   }
@@ -109,7 +125,10 @@ function finalizeSegment(current: Token[], segments: Token[][]): void {
 
 function normalizeSegment(tokens: Token[]): Token[] {
   let i = 0;
-  while (i < tokens.length && (tokens[i].type === "env" || tokens[i].type === "wrapper")) {
+  while (
+    i < tokens.length &&
+    (tokens[i].type === "env" || tokens[i].type === "wrapper")
+  ) {
     i++;
   }
   return i < tokens.length ? tokens.slice(i) : tokens;
