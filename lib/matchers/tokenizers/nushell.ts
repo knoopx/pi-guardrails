@@ -14,7 +14,11 @@ interface StringConfig {
  * Parse a string literal, advancing past the closing delimiter.
  * Returns [content, newI].
  */
-function parseStringLiteral(command: string, start: number, config: StringConfig): [string, number] {
+function parseStringLiteral(
+  command: string,
+  start: number,
+  config: StringConfig,
+): [string, number] {
   let content = "";
   let i = start;
   while (i < command.length) {
@@ -27,7 +31,11 @@ function parseStringLiteral(command: string, start: number, config: StringConfig
     }
     // Quote character — end of string or escape sequence (e.g. '' → ')
     if (c === config.quote) {
-      if (config.escapeSeq && i + 1 < command.length && command.substring(i, i + 2) === config.escapeSeq) {
+      if (
+        config.escapeSeq &&
+        i + 1 < command.length &&
+        command.substring(i, i + 2) === config.escapeSeq
+      ) {
         content += config.escapeSeq[0];
         i += 2;
         continue;
@@ -58,7 +66,8 @@ function classifyChar(command: string, i: number): CharKind {
   if (ch === '"' || ch === "'" || ch === "`") return "string";
   if (ch === "$") return "variable";
   if (ch === "|") return "segmentSplit";
-  if (ch === "&" && i + 1 < command.length && command[i + 1] === "&") return "segmentSplit";
+  if (ch === "&" && i + 1 < command.length && command[i + 1] === "&")
+    return "segmentSplit";
   return "word";
 }
 
@@ -67,9 +76,14 @@ function parseString(command: string, i: number, current: Token[]): number {
   const ch = command[i];
   let config: StringConfig;
   switch (ch) {
-    case '"': config = { quote: '"', escape: "\\", escapeSeq: null }; break;
-    case "'": config = { quote: "'", escape: null, escapeSeq: "''" }; break;
-    default: config = { quote: "`", escape: "\\", escapeSeq: null };
+    case '"':
+      config = { quote: '"', escape: "\\", escapeSeq: null };
+      break;
+    case "'":
+      config = { quote: "'", escape: null, escapeSeq: "''" };
+      break;
+    default:
+      config = { quote: "`", escape: "\\", escapeSeq: null };
   }
   const [content, newI] = parseStringLiteral(command, i + 1, config);
   current.push(token(content, "string"));
