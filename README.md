@@ -1,12 +1,18 @@
-# Guardrails SDK
+# Pi Guardrails
 
 Library for building guardrails in the PI coding agent. Import `guardrails`, pass a builder callback, and get a configured extension.
 
+## Usage
+
+### 1. Create your guardrails extension
+
 ```bash
-bun add pi-guardrails
+mkdir ~/.pi/agent/extensions/my-guardrails/
+cd ~/.pi/agent/extensions/my-guardrails/
+bun add knoopx/pi-guardrails
 ```
 
-## Usage
+### 2. Write your rules in `~/.pi/agent/extensions/my-guardrails/index.ts`
 
 ```ts
 import guardrails from "pi-guardrails";
@@ -18,14 +24,32 @@ export default guardrails((ctx) => {
 });
 ```
 
-The `guardrails` function returns an async extension that registers `tool_call` and `tool_result` event handlers, a `/guardrails` toggle command, and the rules you define.
+Each rule: `ctx.tool("toolName").input(key, matcher).action("reason")`
+
+### 3. Verify it loads
+
+Run `pi` — if the directory exists under `~/.pi/agent/extensions/`, it auto-loads.
+
+### 4. Toggle guardrails on/off
+
+```
+/guardrails off   # disable all rules
+/guardrails on    # re-enable
+```
+
+Or in code:
+```ts
+import { configLoader } from "pi-guardrails";
+configLoader.enabled = false;
+await configLoader.save();
+```
 
 ## Builder API
 
 The callback receives a `GuardrailContext` with tokenizer-aware namespaces (`ctx.bash`, `ctx.nu`, `ctx.sql`) and combinators (`ctx.seq`, `ctx.contains`, etc.). Rules are defined via a fluent builder chain:
 
 ```
-ctx → .tool(name) → .input(key, matcher) → [action | .output(matcher)]
+ctx → .tool(name) → .input(key, matcher) → [action | .output(matcher) | .error(matcher)]
 ```
 
 ### Pre-execution actions (before a tool runs)
@@ -96,6 +120,42 @@ ctx.tool("bash")
   .output(ctx.regex(/~/))
   .block("Result contains ~ — should expand to full path");
 ```
+
+### Error-capture actions (on tool errors)
+
+Use `.error()` to match on `tool_result` events where `isError` is `true`. The matcher operates on the result content text (same as `.output()`):
+
+```ts
+ctx.tool("bash")
+  .error(ctx.regex(/segfault|core dump|signal 11/i))
+  .block("Tool crashed with a segfault");
+```
+
+```ts
+ctx.tool("python-eval")
+  .error(ctx.seq(ctx.nu.word("Traceback")))
+  .rewrite((event) => ({
+    content: event.content?.map(c =>
+      c.type === "text" ? { ...c, text: c.text + "\n\n💡 Check your variable types" } : c
+    ),
+  }));
+```
+
+```ts
+ctx.tool("bash")
+  .error(ctx.regex(/permission denied/i))
+  .confirm("Permission error — was this expected?");
+```
+
+```ts
+ctx.tool("write")
+  .error(ctx.anyToken())
+  .run("echo 'Write failed — check file permissions'");
+```
+
+Chain: `ctx.tool(name) → .error(matcher) → [action]`
+
+The `.error()` matcher matches against `event.content` text, tokenized with the default bash tokenizer. Error rules fire before post-execution rules — if an error rule matches and acts, the post-execution rules are skipped.
 
 ## RewriteBuilder
 
@@ -254,12 +314,12 @@ ctx.tool("write").input("content", ctx.regex(/eslint-disable/))
 
 ## Extension Registration
 
-The guardrails system integrates with the PI coding agent via `tool_call` and `tool_result` event hooks:
+The guardrails system integrates with the PI coding agent via `tool_call` and `tool_result` event hooks. The builder callback receives a `GuardrailContext` typed automatically:
 
 ```ts
-import guardrails, { type GuardrailContext } from "pi-guardrails";
+import guardrails from "pi-guardrails";
 
-export default guardrails((ctx: GuardrailContext) => {
+export default guardrails((ctx) => {
   // Define rules here
   ctx.tool("bash")
     .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
@@ -281,6 +341,7 @@ All guardrail checks can be executed outside of the extension context via standa
 import {
   handleToolCall,
   handleToolResult,
+  handleToolError,
   createHandler,
   composeContexts,
   withFallback,
@@ -292,8 +353,9 @@ import {
 |----------|-----------|-------------|
 | `handleToolCall` | `(ctx: GuardrailContext, event: ToolCallEvent) => ToolCallEventResult \| undefined` | Evaluate pre-execution rules against a tool call event |
 | `handleToolResult` | `(ctx: GuardrailContext, event: ToolResultEvent) => ToolResultEventResult \| undefined` | Evaluate post-execution rules against a tool result event |
-| `createHandler` | `(ctx: GuardrailContext) => { handleCall, handleResult }` | Create a handler object for both call and result events |
-| `composeContexts` | `(...ctxs: GuardrailContext[]) => { handleCall, handleResult }` | Chain multiple contexts; first match wins |
+| `handleToolError` | `(ctx: GuardrailContext, event: ToolResultEvent) => ToolResultEventResult \| undefined` | Evaluate error rules against a tool result event (only when isError is true) |
+| `createHandler` | `(ctx: GuardrailContext) => { handleCall, handleResult, handleError }` | Create a handler object for call, result, and error events |
+| `composeContexts` | `(...ctxs: GuardrailContext[]) => { handleCall, handleResult, handleError }` | Chain multiple contexts; first match wins |
 | `withFallback` | `<T>(primary: () => T \| undefined, fallback: T) => T` | Return primary result or fallback value |
 
 **Example — standalone handler:**
@@ -325,6 +387,25 @@ ctx2.tool("bash").input("command", ctx2.bash.word("sudo")).block("No sudo");
 
 const composed = composeContexts(ctx1, ctx2);
 // Any bash call with "rm" or "sudo" will be blocked
+```
+
+**Example — error handler:**
+
+```ts
+import { handleToolError, GuardrailContext } from "pi-guardrails";
+
+const ctx = new GuardrailContext();
+ctx.tool("bash").error(ctx.regex(/segfault|core dump/i)).block("Tool crashed");
+
+// Evaluate an error event:
+const result = handleToolError(ctx, {
+  toolName: "bash",
+  toolCallId: "1",
+  input: { command: "./crashy_program" },
+  content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+  isError: true,
+});
+// { block: true, reason: "Tool crashed" }
 ```
 
 ### Config Loader
@@ -535,6 +616,7 @@ import type {
   InputCondition,
   PreExecutionRule,
   PostExecutionRule,
+  ErrorRule,
 } from "pi-guardrails";
 ```
 
@@ -550,7 +632,7 @@ type Timing = "before" | "after";
 ### `GuardrailAction`
 
 ```ts
-type GuardrailAction = "block" | "confirm" | "run" | "rewrite";
+type GuardrailAction = "block" | "confirm" | "run" | "rewrite" | "error_block" | "error_confirm" | "error_run" | "error_rewrite";
 ```
 
 | Action | Behavior |
@@ -559,6 +641,10 @@ type GuardrailAction = "block" | "confirm" | "run" | "rewrite";
 | `"confirm"` | Require user confirmation before proceeding |
 | `"run"` | Execute a shell command (with `{key}` interpolation) |
 | `"rewrite"` | Transform the tool result content |
+| `"error_block"` | Block the tool result when `isError` is true |
+| `"error_confirm"` | Require confirmation when `isError` is true |
+| `"error_run"` | Execute a shell command when `isError` is true |
+| `"error_rewrite"` | Transform error result content |
 
 ### `RewriteFn`
 
@@ -615,6 +701,22 @@ interface PostExecutionRule {
   rewriteFn?: RewriteFn;
 }
 ```
+
+### `ErrorRule`
+
+```ts
+interface ErrorRule {
+  toolName: string;
+  inputConditions: InputCondition[];
+  outputMatcher: Matcher | null;
+  action: GuardrailAction;
+  reason?: string;
+  command?: string;
+  rewriteFn?: RewriteFn;
+}
+```
+
+`ErrorRule` fires on `tool_result` events where `isError` is `true`. It matches against `event.content` text using the same pattern as `PostExecutionRule.outputMatcher`. Error rules execute before post-execution rules — if an error rule matches and acts, post-execution rules are skipped.
 
 ### RewriteBuilder — Two Distinct Interfaces
 
