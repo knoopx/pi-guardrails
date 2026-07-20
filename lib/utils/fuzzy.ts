@@ -9,7 +9,9 @@
 export function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    Array(n + 1).fill(0),
+  );
 
   for (let i = 0; i <= m; i++) dp[i][0] = i;
   for (let j = 0; j <= n; j++) dp[0][j] = j;
@@ -34,7 +36,11 @@ export function levenshtein(a: string, b: string): number {
  * @param maxDistance - Maximum Levenshtein distance to consider a match
  * @returns The closest matching target string, or null if no match within threshold
  */
-export function fuzzyMatch(str: string, targets: string[], maxDistance: number): string | null {
+export function fuzzyMatch(
+  str: string,
+  targets: string[],
+  maxDistance: number,
+): string | null {
   let bestMatch: string | null = null;
   let bestDist = maxDistance + 1;
 
@@ -56,7 +62,11 @@ export function fuzzyMatch(str: string, targets: string[], maxDistance: number):
  * @param maxDistance - Maximum Levenshtein distance
  * @returns Array of matched targets
  */
-export function fuzzyMatchAll(str: string, targets: string[], maxDistance: number): string[] {
+export function fuzzyMatchAll(
+  str: string,
+  targets: string[],
+  maxDistance: number,
+): string[] {
   const results: string[] = [];
 
   for (const target of targets) {
@@ -76,7 +86,11 @@ export function fuzzyMatchAll(str: string, targets: string[], maxDistance: numbe
  * @param maxDistance - Maximum Levenshtein distance for fuzzy matching
  * @returns The closest matching target string, or null
  */
-export function substringFuzzyMatch(str: string, targets: string[], maxDistance: number): string | null {
+export function substringFuzzyMatch(
+  str: string,
+  targets: string[],
+  maxDistance: number,
+): string | null {
   // First try exact substring match
   for (const target of targets) {
     if (target.includes(str) || str.includes(target)) {

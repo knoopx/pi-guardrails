@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { levenshtein, fuzzyMatch, fuzzyMatchAll, substringFuzzyMatch } from "./fuzzy.js";
+import {
+  levenshtein,
+  fuzzyMatch,
+  fuzzyMatchAll,
+  substringFuzzyMatch,
+} from "./fuzzy.js";
 
 describe("levenshtein", () => {
   it("returns 0 for identical strings", () => {
@@ -42,7 +47,10 @@ describe("fuzzyMatch", () => {
 
 describe("fuzzyMatchAll", () => {
   it("returns all matches within distance", () => {
-    expect(fuzzyMatchAll("hello", ["hello", "world", "hallo"], 2)).toEqual(["hello", "hallo"]);
+    expect(fuzzyMatchAll("hello", ["hello", "world", "hallo"], 2)).toEqual([
+      "hello",
+      "hallo",
+    ]);
   });
 
   it("returns empty array when no matches", () => {
@@ -50,7 +58,10 @@ describe("fuzzyMatchAll", () => {
   });
 
   it("returns all when distance is large", () => {
-    expect(fuzzyMatchAll("hello", ["hello", "world"], 10)).toEqual(["hello", "world"]);
+    expect(fuzzyMatchAll("hello", ["hello", "world"], 10)).toEqual([
+      "hello",
+      "world",
+    ]);
   });
 });
 
