@@ -194,16 +194,24 @@ export function spread(): Matcher {
 }
 
 /**
- * Contains: matcher appears anywhere in tokens.
+ * Contains: check if the target sequence appears anywhere in the tokens.
  */
 export function contains(...targets: Matcher[]): Matcher {
-  const obj = makeExact((tokens, from) => {
-    for (let pos = from; pos <= tokens.length; pos++) {
-      if (matchSeq(targets, tokens, 0, pos))
-        return { ok: true, consumed: tokens.length };
-    }
-    return { ok: false };
-  });
+  const obj: Matcher = {
+    match: (tokens) => {
+      for (let pos = 0; pos <= tokens.length; pos++) {
+        if (matchSeq(targets, tokens, 0, pos)) return true;
+      }
+      return false;
+    },
+    tryMatch: (tokens, from) => {
+      for (let pos = from; pos <= tokens.length; pos++) {
+        if (matchSeq(targets, tokens, 0, pos))
+          return { ok: true, consumed: tokens.length };
+      }
+      return { ok: false };
+    },
+  };
   const tokenizer = getInnerTokenizer(targets);
   if (tokenizer)
     return Object.assign(obj, { __tokenizer: tokenizer } as Matcher & {

@@ -2,16 +2,23 @@ import type { Matcher, Token } from "./types.js";
 import { makeExact } from "./helpers.js";
 
 /**
- * Match a word (case-insensitive exact match). Matches if the token value exactly equals the word.
+ * Match a word (case-insensitive exact match). `match` checks if ANY token
+ * matches the word; `tryMatch` consumes starting at `from` for combinators.
  */
 export function word(...words: string[]): Matcher {
   const normalized = words.map((w) => w.toLowerCase());
-  return makeExact((tokens: Token[], from: number) => {
-    if (from >= tokens.length) return { ok: false };
-    const val = tokens[from].value.toLowerCase();
-    if (normalized.some((w) => val === w)) return { ok: true, consumed: 1 };
-    return { ok: false };
-  });
+  return {
+    match: (tokens: Token[]) =>
+      tokens.some((t: Token) =>
+        normalized.some((w) => t.value.toLowerCase() === w),
+      ),
+    tryMatch: (tokens: Token[], from: number) => {
+      if (from >= tokens.length) return { ok: false };
+      const val = tokens[from].value.toLowerCase();
+      if (normalized.some((w) => val === w)) return { ok: true, consumed: 1 };
+      return { ok: false };
+    },
+  };
 }
 
 /**
