@@ -1,7 +1,7 @@
 import {
   loadEnabledSetting,
   saveEnabledSetting,
-} from "../../shared/config/settings.js";
+} from "./settings.js";
 
 const GUARDRAILS_SETTINGS_KEY = "guardrails";
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GuardrailsConfigLoader } from "./loader.js";
-import * as settings from "../../shared/config/settings.js";
+import * as settings from "./settings.js";
 
 describe("GuardrailsConfigLoader", () => {
   let loader: GuardrailsConfigLoader;
@@ -9,7 +9,7 @@ describe("GuardrailsConfigLoader", () => {
     vi.spyOn(settings, "loadEnabledSetting").mockResolvedValue({
       enabled: true,
     });
-    vi.spyOn(settings, "saveEnabledSetting").mockResolvedValue(undefined);
+    vi.spyOn(settings, "saveEnabledSetting").mockResolvedValue({ enabled: true });
     loader = new GuardrailsConfigLoader();
   });
 
