@@ -1,21 +1,41 @@
 import type { Matcher } from "../matchers/types.js";
-import type { ToolResultEvent, ToolResultEventResult, TextContent, ImageContent } from "./events.js";
+import type {
+  ToolResultEvent,
+  ToolResultEventResult,
+  TextContent,
+  ImageContent,
+} from "./events.js";
 
 /** Timing of when a rule fires. */
 export type Timing = "before" | "after";
 
 /** Action type for a guardrail rule. */
-export type GuardrailAction = "block" | "confirm" | "run" | "rewrite";
+export type GuardrailAction =
+  | "block"
+  | "confirm"
+  | "run"
+  | "rewrite"
+  | "error_block"
+  | "error_confirm"
+  | "error_run"
+  | "error_rewrite";
 
 /** A rewrite function that transforms a ToolResultEvent and returns a modified result. */
-export type RewriteFn = (event: ToolResultEvent) => ToolResultEventResult | undefined;
+export type RewriteFn = (
+  event: ToolResultEvent,
+) => ToolResultEventResult | undefined;
 
 /** Builder for rewriting PI ToolResultEventResult properties. */
 export interface RewriteBuilder {
   /** Transform all text content. */
   text(fn: (text: string) => string): RewriteBuilder;
   /** Transform a specific content index. */
-  content(fn: (index: number, content: TextContent | ImageContent) => TextContent | ImageContent): RewriteBuilder;
+  content(
+    fn: (
+      index: number,
+      content: TextContent | ImageContent,
+    ) => TextContent | ImageContent,
+  ): RewriteBuilder;
   /** Set block flag. */
   block(value: boolean): RewriteBuilder;
   /** Set reason string. */
@@ -46,6 +66,18 @@ export interface PreExecutionRule {
 
 /** Rule that fires during tool_result (post-execution). */
 export interface PostExecutionRule {
+  toolName: string;
+  inputConditions: InputCondition[];
+  outputMatcher: Matcher | null;
+  timing: Timing;
+  action: GuardrailAction;
+  reason?: string;
+  command?: string;
+  rewriteFn?: RewriteFn;
+}
+
+/** Rule that fires on tool_result events where isError is true. */
+export interface ErrorRule {
   toolName: string;
   inputConditions: InputCondition[];
   outputMatcher: Matcher | null;
