@@ -127,6 +127,9 @@ export class GuardrailContext {
   contains(...inner: Matcher[]): Matcher {
     return contains(...inner);
   }
+  anyOf(...matchers: Matcher[]): Matcher {
+    return anyOf(...matchers);
+  }
 
   /**
    * Scope to a specific tool by name.
