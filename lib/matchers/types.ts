@@ -20,4 +20,7 @@ export type Matcher = {
   __repeat?: true;
   // Tokenizer function — set by tagged() via ctx.bash/ctx.nu/ctx.sql builders
   __tokenizer?: Tokenizer;
+  // Regex marker and patterns — set by regex()
+  __isRegex?: true;
+  __patterns?: RegExp[];
 };

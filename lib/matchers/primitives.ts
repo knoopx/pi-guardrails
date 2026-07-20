@@ -42,7 +42,7 @@ export function regex(...exprs: RegExp[]): Matcher {
         return { ok: false };
       },
     },
-    { __isRegex: true, __patterns: exprs },
+    { __isRegex: true as true, __patterns: exprs },
   );
 }
 

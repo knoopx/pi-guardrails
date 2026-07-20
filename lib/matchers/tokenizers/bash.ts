@@ -31,26 +31,21 @@ export function tokenizeBash(command: string): Token[][] {
 }
 
 function parseShell(command: string): ReturnType<typeof parse> {
-  try {
-    const result = parse(command);
-    // shell-quote treats ? and * as glob chars even in URLs.
-    // If the entire input was parsed as a single glob pattern, fall back
-    // to simple whitespace splitting (the input is likely a URL or path).
-    if (
-      result.length === 1 &&
-      typeof result[0] === "object" &&
-      "pattern" in result[0] &&
-      "op" in result[0] &&
-      result[0].op === "glob" &&
-      command.includes("://")
-    ) {
-      return command.split(/\s+/).filter(Boolean);
-    }
-    return result;
-  } catch {
-    const parts = command.split(/\s+/);
-    return parts.length > 0 ? parts : [];
+  const result = parse(command);
+  // shell-quote treats ? and * as glob chars even in URLs.
+  // If the entire input was parsed as a single glob pattern, fall back
+  // to simple whitespace splitting (the input is likely a URL or path).
+  if (
+    result.length === 1 &&
+    typeof result[0] === "object" &&
+    "pattern" in result[0] &&
+    "op" in result[0] &&
+    result[0].op === "glob" &&
+    command.includes("://")
+  ) {
+    return command.split(/\s+/).filter(Boolean);
   }
+  return result;
 }
 
 function makeToken(value: string, type: string): Token {

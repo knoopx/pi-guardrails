@@ -497,8 +497,8 @@ export class GuardrailContext {
       // Regex matchers match against the raw string to handle patterns
       // that span token boundaries (e.g. /\bxit\(/ split into ['xit', '(']
       // by the bash tokenizer)
-      if ((matcher as any).__isRegex) {
-        const patterns = (matcher as any).__patterns;
+      if (matcher.__isRegex) {
+        const patterns = matcher.__patterns!;
         if (
           !patterns.some((p: RegExp) => {
             p.lastIndex = 0;
