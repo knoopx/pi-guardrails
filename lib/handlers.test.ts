@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolResultEvent } from "./builder/events.js";
 import {
   handleToolCall,
@@ -480,35 +480,28 @@ describe("withFallback", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("createGuardrailsHandler", () => {
-  it("is a function that accepts args and context", () => {
-    const mockLoader = {
-      _enabled: true,
-      get enabled() {
-        return this._enabled;
-      },
-      set enabled(v: boolean) {
-        this._enabled = v;
-      },
-      save: async () => {},
+  let mockLoader: { enabled: boolean; save: ReturnType<typeof vi.fn> };
+  let mockCtx: { ui: { notify: ReturnType<typeof vi.fn> } };
+
+  beforeEach(() => {
+    mockLoader = {
+      enabled: true,
+      save: vi.fn(async () => {}),
     };
+    mockCtx = {
+      ui: { notify: vi.fn() },
+    };
+  });
+
+  it("is a function that accepts args and context", () => {
     const handler = createGuardrailsHandler(mockLoader as any);
     expect(typeof handler).toBe("function");
   });
 
   it("enables guardrails when args is 'on'", async () => {
-    const mockLoader = {
-      _enabled: false,
-      get enabled() {
-        return this._enabled;
-      },
-      set enabled(v: boolean) {
-        this._enabled = v;
-      },
-      save: vi.fn(async () => {}),
-    };
+    mockLoader.enabled = false;
     const handler = createGuardrailsHandler(mockLoader as any);
-    const mockCtx = { ui: { notify: vi.fn() } } as any;
-    await handler("on", mockCtx);
+    await handler("on", mockCtx as any);
     expect(mockLoader.enabled).toBe(true);
     expect(mockLoader.save).toHaveBeenCalled();
     expect(mockCtx.ui.notify).toHaveBeenCalledWith(
@@ -518,19 +511,9 @@ describe("createGuardrailsHandler", () => {
   });
 
   it("disables guardrails when args is 'off'", async () => {
-    const mockLoader = {
-      _enabled: true,
-      get enabled() {
-        return this._enabled;
-      },
-      set enabled(v: boolean) {
-        this._enabled = v;
-      },
-      save: vi.fn(async () => {}),
-    };
+    mockLoader.enabled = true;
     const handler = createGuardrailsHandler(mockLoader as any);
-    const mockCtx = { ui: { notify: vi.fn() } } as any;
-    await handler("off", mockCtx);
+    await handler("off", mockCtx as any);
     expect(mockLoader.enabled).toBe(false);
     expect(mockLoader.save).toHaveBeenCalled();
     expect(mockCtx.ui.notify).toHaveBeenCalledWith(
@@ -539,22 +522,10 @@ describe("createGuardrailsHandler", () => {
     );
   });
 
-  it("ignores unknown args", async () => {
-    const mockLoader = {
-      _enabled: true,
-      get enabled() {
-        return this._enabled;
-      },
-      set enabled(v: boolean) {
-        this._enabled = v;
-      },
-      save: vi.fn(async () => {}),
-    };
+  it("throws on unknown args", async () => {
     const handler = createGuardrailsHandler(mockLoader as any);
-    const mockCtx = { ui: { notify: vi.fn() } } as any;
-    await handler("foobar", mockCtx);
-    expect(mockLoader.enabled).toBe(true);
-    expect(mockLoader.save).not.toHaveBeenCalled();
-    expect(mockCtx.ui.notify).not.toHaveBeenCalled();
+    await expect(handler("foobar", mockCtx as any)).rejects.toThrow(
+      /Invalid guardrails command/,
+    );
   });
 });

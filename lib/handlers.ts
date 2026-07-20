@@ -18,12 +18,34 @@ export function createGuardrailsHandler(
   return async (args: string, ctx) => {
     if (args === "on") {
       configLoader.enabled = true;
-      await configLoader.save();
-      ctx?.ui.notify("Guardrails enabled", "info");
+      try {
+        await configLoader.save();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(
+          `Failed to persist guardrails state: ${message}`,
+          "error",
+        );
+        throw err;
+      }
+      ctx.ui.notify("Guardrails enabled", "info");
     } else if (args === "off") {
       configLoader.enabled = false;
-      await configLoader.save();
-      ctx?.ui.notify("Guardrails disabled", "info");
+      try {
+        await configLoader.save();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(
+          `Failed to persist guardrails state: ${message}`,
+          "error",
+        );
+        throw err;
+      }
+      ctx.ui.notify("Guardrails disabled", "info");
+    } else {
+      throw new Error(
+        `Invalid guardrails command: "${args}". Use /guardrails [on|off]`,
+      );
     }
   };
 }
