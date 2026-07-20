@@ -43,6 +43,85 @@ function makeResultJson(
   } as unknown as ToolResultEvent;
 }
 
+function makeError(
+  input: Record<string, unknown>,
+  content: string,
+): ToolResultEvent {
+  return {
+    toolCallId: "1",
+    toolName: "bash",
+    input,
+    content: [{ type: "text", text: content }],
+    isError: true,
+  } as unknown as ToolResultEvent;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Test assertion helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Match a tool call and assert block/no-block result. */
+function assertCall(
+  ctx: GuardrailContext,
+  toolName: string,
+  input: Record<string, unknown>,
+  expectBlock: boolean,
+  expectedReason?: string,
+): void {
+  const result = ctx.matchCall(makeCall(toolName, input));
+  if (expectBlock) {
+    if (expectedReason !== undefined) {
+      expect(result).toMatchObject({ block: true, reason: expectedReason });
+    } else {
+      expect(result).toMatchObject({ block: true });
+    }
+  } else {
+    expect(result).toBeUndefined();
+  }
+}
+
+/** Match a tool result and assert block/no-block result. */
+function assertResult(
+  ctx: GuardrailContext,
+  toolName: string,
+  input: Record<string, unknown>,
+  content: string,
+  expectBlock: boolean,
+  expectedReason?: string,
+): void {
+  const result = ctx.matchResult(makeResult(toolName, input, content));
+  if (expectBlock) {
+    if (expectedReason !== undefined) {
+      expect(result).toMatchObject({ block: true, reason: expectedReason });
+    } else {
+      expect(result).toMatchObject({ block: true });
+    }
+  } else {
+    expect(result).toBeUndefined();
+  }
+}
+
+/** Assert error result is blocked with given reason. */
+function assertErrorBlock(
+  ctx: GuardrailContext,
+  input: Record<string, unknown>,
+  content: string,
+  reason: string,
+): void {
+  const result = ctx.matchError(makeError(input, content));
+  expect(result).toMatchObject({ block: true, reason });
+}
+
+/** Assert error result does NOT trigger a block (returns undefined). */
+function assertErrorNoBlock(
+  ctx: GuardrailContext,
+  input: Record<string, unknown>,
+  content: string,
+): void {
+  const result = ctx.matchError(makeError(input, content));
+  expect(result).toBeUndefined();
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Pre-execution: tool().input().block()
 // ──────────────────────────────────────────────────────────────────────────────
@@ -94,62 +173,38 @@ describe("GuardrailContext — pre-execution rules", () => {
     });
   });
 
-  it("does not block unrelated commands", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("Blocked");
+  describe("rm-block rule", () => {
+    beforeEach(() => {
+      ctx
+        .tool("bash")
+        .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+        .block("Blocked");
+    });
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "find / -name '*.tmp' -exec rm {} +" }),
-    );
-    expect(result).toBeUndefined();
-  });
+    it("does not block unrelated commands", () => {
+      assertCall(
+        ctx,
+        "bash",
+        { command: "find / -name '*.tmp' -exec rm {} +" },
+        false,
+      );
+    });
 
-  it("does not match when first token doesn't match", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("Blocked");
+    it("does not match when first token doesn't match", () => {
+      assertCall(ctx, "bash", { command: "ls -la" }, false);
+    });
 
-    const result = ctx.matchCall(makeCall("bash", { command: "ls -la" }));
-    expect(result).toBeUndefined();
-  });
+    it("blocks rm after &&", () => {
+      assertCall(ctx, "bash", { command: "cd /tmp && rm -rf ." }, true);
+    });
 
-  it("blocks rm after &&", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("Blocked");
+    it("blocks rm after ;", () => {
+      assertCall(ctx, "bash", { command: "echo hello; rm -rf /" }, true);
+    });
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "cd /tmp && rm -rf ." }),
-    );
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("blocks rm after ;", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "echo hello; rm -rf /" }),
-    );
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("blocks rm after ||", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "ls || rm -rf ." }),
-    );
-    expect(result).toMatchObject({ block: true });
+    it("blocks rm after ||", () => {
+      assertCall(ctx, "bash", { command: "ls || rm -rf ." }, true);
+    });
   });
 
   it("matches nushell ls -R (nu-syntax guardrail)", () => {
@@ -409,58 +464,45 @@ describe("GuardrailContext — pre-execution rules", () => {
 
 describe("GuardrailContext — post-execution block", () => {
   beforeEach(() => {
-    ctx = new GuardrailContext();
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .output(ctx.regex(/~/))
+      .block("Result contains ~ — should expand to full path");
   });
 
   it("blocks result matching output pattern with input condition", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .output(ctx.regex(/~/))
-      .block("Result contains ~ — should expand to full path");
-
-    const result = ctx.matchResult(
-      makeResult("bash", { command: "rm ~/data.csv" }, "~/data.csv output"),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm ~/data.csv" },
+      "~/data.csv output",
+      true,
     );
-    expect(result).toMatchObject({ block: true });
   });
 
   it("does not block when output does not match", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .output(ctx.regex(/~/))
-      .block("Result contains ~ — should expand to full path");
-
-    const result = ctx.matchResult(
-      makeResult(
-        "bash",
-        { command: "rm /home/user/data.csv" },
-        "/home/user/data.csv output",
-      ),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm /home/user/data.csv" },
+      "/home/user/data.csv output",
+      false,
     );
-    expect(result).toBeUndefined();
   });
 
   it("does not block when input condition does not match", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .output(ctx.regex(/~/))
-      .block("Result contains ~ — should expand to full path");
-
-    const result = ctx.matchResult(
-      makeResult("bash", { command: "ls ~" }, "~/data.csv output"),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "ls ~" },
+      "~/data.csv output",
+      false,
     );
-    expect(result).toBeUndefined();
   });
 });
 
 describe("GuardrailContext — post-execution confirm", () => {
-  beforeEach(() => {
-    ctx = new GuardrailContext();
-  });
-
   it("confirms result matching output pattern with input condition", () => {
     ctx
       .tool("bash")
@@ -468,10 +510,13 @@ describe("GuardrailContext — post-execution confirm", () => {
       .output(ctx.regex(/~/))
       .confirm("Confirm the rm result");
 
-    const result = ctx.matchResult(
-      makeResult("bash", { command: "rm ~/data.csv" }, "~/data.csv output"),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm ~/data.csv" },
+      "~/data.csv output",
+      true,
     );
-    expect(result).toMatchObject({ block: true });
   });
 });
 
@@ -519,14 +564,13 @@ describe("GuardrailContext — post-execution rewrite", () => {
         return { content: newContent };
       });
 
-    const result = ctx.matchResult(
-      makeResult(
-        "bash",
-        { command: "rm /home/user/data.csv" },
-        "/home/user/data.csv output",
-      ),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm /home/user/data.csv" },
+      "/home/user/data.csv output",
+      false,
     );
-    expect(result).toBeUndefined();
   });
 
   it("can rewrite JSON content", () => {
@@ -585,48 +629,32 @@ describe("GuardrailContext — post-execution run", () => {
 
 describe("GuardrailContext — pre-execution run action", () => {
   beforeEach(() => {
-    ctx = new GuardrailContext();
+    ctx
+      .tool("bash")
+      .input(
+        "command",
+        ctx.seq(
+          ctx.bash.word("bun"),
+          ctx.bash.word("add"),
+          ctx.bash.word("-g"),
+          ctx.star(),
+        ),
+      )
+      .run("echo 'Global install blocked!'");
   });
 
   it("matches bun add -g pattern with run command", () => {
-    ctx
-      .tool("bash")
-      .input(
-        "command",
-        ctx.seq(
-          ctx.bash.word("bun"),
-          ctx.bash.word("add"),
-          ctx.bash.word("-g"),
-          ctx.star(),
-        ),
-      )
-      .run("echo 'Global install blocked!'");
-
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "bun add -g lodash" }),
+    assertCall(
+      ctx,
+      "bash",
+      { command: "bun add -g lodash" },
+      true,
+      "Command blocked: echo 'Global install blocked!'",
     );
-    expect(result).toMatchObject({
-      block: true,
-      reason: "Command blocked: echo 'Global install blocked!'",
-    });
   });
 
   it("run action does not trigger for unrelated commands", () => {
-    ctx
-      .tool("bash")
-      .input(
-        "command",
-        ctx.seq(
-          ctx.bash.word("bun"),
-          ctx.bash.word("add"),
-          ctx.bash.word("-g"),
-          ctx.star(),
-        ),
-      )
-      .run("echo 'Global install blocked!'");
-
-    const result = ctx.matchCall(makeCall("bash", { command: "ls -la" }));
-    expect(result).toBeUndefined();
+    assertCall(ctx, "bash", { command: "ls -la" }, false);
   });
 });
 
@@ -665,72 +693,51 @@ describe("GuardrailContext — rule interactions", () => {
 describe("Fluent API — chained inputs", () => {
   beforeEach(() => {
     ctx = new GuardrailContext();
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .input("file", ctx.bash.word("DELETE_ME"))
+      .block("Blocked");
   });
 
   it("matches rule with multiple input conditions", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .input("file", ctx.bash.word("DELETE_ME"))
-      .block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "rm DELETE_ME", file: "DELETE_ME" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "rm DELETE_ME", file: "DELETE_ME" }, true);
   });
 
   it("returns undefined when second input condition fails", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .input("file", ctx.bash.word("DELETE_ME"))
-      .block("Blocked");
-
-    const result = ctx.matchCall(makeCall("bash", { command: "rm DELETE_ME" }));
-    expect(result).toBeUndefined();
+    assertCall(ctx, "bash", { command: "rm DELETE_ME" }, false);
   });
 });
 
 describe("Fluent API — output + chained inputs", () => {
   beforeEach(() => {
     ctx = new GuardrailContext();
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .input("file", ctx.bash.word("DELETE_ME"))
+      .output(ctx.regex(/~/))
+      .block("Result contains ~ — should expand to full path");
   });
 
   it("matches output rule with multiple input conditions", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .input("file", ctx.bash.word("DELETE_ME"))
-      .output(ctx.regex(/~/))
-      .block("Result contains ~ — should expand to full path");
-
-    const result = ctx.matchResult(
-      makeResult(
-        "bash",
-        { command: "rm ~/DELETE_ME", file: "DELETE_ME" },
-        "~/DELETE_ME output",
-      ),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm ~/DELETE_ME", file: "DELETE_ME" },
+      "~/DELETE_ME output",
+      true,
     );
-    expect(result).toMatchObject({ block: true });
   });
 
   it("returns undefined when second input condition fails", () => {
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .input("file", ctx.bash.word("DELETE_ME"))
-      .output(ctx.regex(/~/))
-      .block("Result contains ~ — should expand to full path");
-
-    const result = ctx.matchResult(
-      makeResult(
-        "bash",
-        { command: "rm /home/user/DELETE_ME" },
-        "~/DELETE_ME output",
-      ),
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm /home/user/DELETE_ME" },
+      "~/DELETE_ME output",
+      false,
     );
-    expect(result).toBeUndefined();
   });
 });
 
@@ -754,8 +761,7 @@ describe("cm-flags guardrail", () => {
         "cm has no `--version` flag. Use `cm --help` to check availability",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "cm --version" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "cm --version" }, true);
   });
 
   it("blocks `cm deps --circular foo`", () => {
@@ -775,10 +781,7 @@ describe("cm-flags guardrail", () => {
         "cm deps has no `--circular` flag. Use `cm deps <target>` without it — circular deps are shown by default",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "cm deps --circular foo" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "cm deps --circular foo" }, true);
   });
 
   it("blocks `cm callers symbol foo`", () => {
@@ -797,10 +800,7 @@ describe("cm-flags guardrail", () => {
         "cm callers takes a symbol name directly, not 'symbol <name>'. Use `cm callers <symbol>`",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "cm callers symbol foo" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "cm callers symbol foo" }, true);
   });
 
   it("blocks `cm map /path`", () => {
@@ -814,8 +814,7 @@ describe("cm-flags guardrail", () => {
         "cm map takes a directory path, not a file path. Point it at the project root directory",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "cm map /path" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "cm map /path" }, true);
   });
 });
 
@@ -843,10 +842,7 @@ describe("jj-hunk-flags guardrail", () => {
         "jj-hunk has no `--version` flag. Use `jj-hunk help` to check availability",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "jj-hunk --version" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "jj-hunk --version" }, true);
   });
 
   it("blocks `jj-hunk -V`", () => {
@@ -860,8 +856,7 @@ describe("jj-hunk-flags guardrail", () => {
         "jj-hunk has no `-V` flag. Use `jj-hunk help` to check availability",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "jj-hunk -V" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "jj-hunk -V" }, true);
   });
 
   it("blocks `jj-hunk split --include foo`", () => {
@@ -881,10 +876,7 @@ describe("jj-hunk-flags guardrail", () => {
         "jj-hunk split has no `--include` flag. Pass file paths directly or use `-f` for a spec file",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "jj-hunk split --include foo" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "jj-hunk split --include foo" }, true);
   });
 });
 
@@ -913,10 +905,7 @@ describe("kuva-flags guardrail", () => {
         "kuva has no `--x-col` flag. Use `--x` instead. Example: `kuva scatter --x price --y score`",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva scatter --x-col price" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva scatter --x-col price" }, true);
   });
 
   it("blocks `kuva --y-col name`", () => {
@@ -935,10 +924,7 @@ describe("kuva-flags guardrail", () => {
         "kuva has no `--y-col` flag. Use `--y` instead. Example: `kuva scatter --x price --y score`",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --y-col name" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --y-col name" }, true);
   });
 
   it("blocks `kuva --label-col label`", () => {
@@ -955,10 +941,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--label-col` flag. Use `--label` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --label-col label" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --label-col label" }, true);
   });
 
   it("blocks `kuva --color-by col`", () => {
@@ -977,10 +960,7 @@ describe("kuva-flags guardrail", () => {
         "not all kuva chart types support `--color-by`. Check the chart type docs",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --color-by col" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --color-by col" }, true);
   });
 
   it("blocks `kuva --legend`", () => {
@@ -999,10 +979,7 @@ describe("kuva-flags guardrail", () => {
         "kuva has no `--legend` flag. Use `--legend-wrap` if available for the chart type",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --legend" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --legend" }, true);
   });
 
   it("blocks `kuva --agg avg`", () => {
@@ -1021,10 +998,7 @@ describe("kuva-flags guardrail", () => {
         "kuva has no `--agg` flag. Aggregate in DuckDB before piping to kuva",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --agg avg" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --agg avg" }, true);
   });
 
   it("blocks `kuva --rotate-labels`", () => {
@@ -1041,10 +1015,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--rotate-labels` flag. Use `--label-angle` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --rotate-labels" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --rotate-labels" }, true);
   });
 
   it("blocks `kuva --color` (any value)", () => {
@@ -1063,10 +1034,7 @@ describe("kuva-flags guardrail", () => {
         "kuva chart types may not support `--color` directly. Use `--palette` or `--color-by` depending on chart type",
       );
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: 'kuva bar --color "red"' }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: 'kuva bar --color "red"' }, true);
   });
 
   it("blocks `kuva --size-col size`", () => {
@@ -1083,10 +1051,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--size-col` flag. Use `--size` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --size-col size" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --size-col size" }, true);
   });
 
   it("blocks `kuva --color-col color`", () => {
@@ -1103,10 +1068,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--color-col` flag. Use `--color-by` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --color-col color" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --color-col color" }, true);
   });
 
   it("blocks `kuva --value-col value`", () => {
@@ -1123,10 +1085,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--value-col` flag. Use `--value` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --value-col value" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --value-col value" }, true);
   });
 
   it("blocks `kuva --group-col group`", () => {
@@ -1143,10 +1102,7 @@ describe("kuva-flags guardrail", () => {
       )
       .block("kuva has no `--group-col` flag. Use `--group` instead");
 
-    const result = ctx.matchCall(
-      makeCall("bash", { command: "kuva --group-col group" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "kuva --group-col group" }, true);
   });
 });
 
@@ -1165,14 +1121,10 @@ describe("linting guardrail", () => {
       .input("content", ctx.regex(/eslint-disable/))
       .block("disabling lint rules hides issues. Fix the code instead");
 
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content:
-          "// eslint-disable-next-line @typescript-eslint/no-explicit-any\nconst x: any = 1",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", {
+      path: "/tmp/test.ts",
+      content: "// eslint-disable-next-line @typescript-eslint/no-explicit-any\nconst x: any = 1",
+    }, true);
   });
 
   it("allows write with normal content", () => {
@@ -1181,10 +1133,7 @@ describe("linting guardrail", () => {
       .input("content", ctx.regex(/eslint-disable/))
       .block("Blocked");
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "/tmp/test.ts", content: "console.log('hi')" }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "write", { path: "/tmp/test.ts", content: "console.log('hi')" }, false);
   });
 
   it("blocks edit with eslint-disable in newText", () => {
@@ -1193,13 +1142,10 @@ describe("linting guardrail", () => {
       .input("newText", ctx.regex(/eslint-disable/))
       .block("disabling lint rules hides issues. Fix the code instead");
 
-    const result = ctx.matchCall(
-      makeCall("edit", {
-        path: "/tmp/test.ts",
-        newText: "// eslint-disable-next-line",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", {
+      path: "/tmp/test.ts",
+      newText: "// eslint-disable-next-line",
+    }, true);
   });
 
   it("allows edit without eslint-disable", () => {
@@ -1208,13 +1154,7 @@ describe("linting guardrail", () => {
       .input("newText", ctx.regex(/eslint-disable/))
       .block("Blocked");
 
-    const result = ctx.matchCall(
-      makeCall("edit", {
-        path: "/tmp/test.ts",
-        newText: "console.log('hello')",
-      }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "edit", { path: "/tmp/test.ts", newText: "console.log('hello')" }, false);
   });
 });
 
@@ -1240,10 +1180,7 @@ describe("lock-files guardrail", () => {
         "lock files are auto-generated. Edit the manifest instead and run the package manager to regenerate",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "package-lock.json", content: "{}" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: "package-lock.json", content: "{}" }, true);
   });
 
   it("blocks write on bun.lockb", () => {
@@ -1259,10 +1196,7 @@ describe("lock-files guardrail", () => {
         "lock files are auto-generated. Edit the manifest instead and run the package manager to regenerate",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "bun.lockb", content: "binary" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: "bun.lockb", content: "binary" }, true);
   });
 
   it("blocks write on Cargo.lock", () => {
@@ -1278,10 +1212,7 @@ describe("lock-files guardrail", () => {
         "lock files are auto-generated. Edit the manifest instead and run the package manager to regenerate",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "Cargo.lock", content: "locked" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: "Cargo.lock", content: "locked" }, true);
   });
 
   it("blocks edit on yarn.lock", () => {
@@ -1297,10 +1228,7 @@ describe("lock-files guardrail", () => {
         "lock files are auto-generated. Edit the manifest instead and run the package manager to regenerate",
       );
 
-    const result = ctx.matchCall(
-      makeCall("edit", { path: "yarn.lock", newText: "lockfileVersion: 6" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", { path: "yarn.lock", newText: "lockfileVersion: 6" }, true);
   });
 
   it("allows write on data.json (not a lock file)", () => {
@@ -1314,10 +1242,7 @@ describe("lock-files guardrail", () => {
       )
       .block("Blocked");
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "data.json", content: "{}" }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "write", { path: "data.json", content: "{}" }, false);
   });
 });
 
@@ -1341,8 +1266,7 @@ describe("nh-flags guardrail", () => {
         "nh has no `build` subcommand. Use `nix build` directly or `nh home switch` / `nh os switch`",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "nh build" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "nh build" }, true);
   });
 
   it("blocks `nh switch`", () => {
@@ -1356,8 +1280,7 @@ describe("nh-flags guardrail", () => {
         "nh has no `switch` subcommand. Use `nh home switch` or `nh os switch`",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "nh switch" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "nh switch" }, true);
   });
 });
 
@@ -1378,10 +1301,7 @@ describe("protect-paths guardrail", () => {
         "VCS internals — direct modification can corrupt history. Use git/jj commands instead",
       );
 
-    const result = ctx.matchCall(
-      makeCall("edit", { path: ".git/config", newText: "new" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", { path: ".git/config", newText: "new" }, true);
   });
 
   it("blocks write on .git/config", () => {
@@ -1392,10 +1312,7 @@ describe("protect-paths guardrail", () => {
         "VCS internals — direct modification can corrupt history. Use git/jj commands instead",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: ".git/config", content: "config" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: ".git/config", content: "config" }, true);
   });
 
   it("blocks edit on .jj/repo/config.toml", () => {
@@ -1406,10 +1323,7 @@ describe("protect-paths guardrail", () => {
         "VCS internals — direct modification can corrupt history. Use git/jj commands instead",
       );
 
-    const result = ctx.matchCall(
-      makeCall("edit", { path: ".jj/repo/config.toml", newText: "toml" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", { path: ".jj/repo/config.toml", newText: "toml" }, true);
   });
 
   it("blocks write on .jj/repo/config.toml", () => {
@@ -1420,10 +1334,7 @@ describe("protect-paths guardrail", () => {
         "VCS internals — direct modification can corrupt history. Use git/jj commands instead",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: ".jj/repo/config.toml", content: "toml" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: ".jj/repo/config.toml", content: "toml" }, true);
   });
 
   it("blocks edit on ~/.config/nvim/init.lua", () => {
@@ -1434,10 +1345,7 @@ describe("protect-paths guardrail", () => {
         "System config directory — modifying config files directly can break applications",
       );
 
-    const result = ctx.matchCall(
-      makeCall("edit", { path: "~/.config/nvim/init.lua", newText: "lua" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", { path: "~/.config/nvim/init.lua", newText: "lua" }, true);
   });
 
   it("blocks write on ~/.config/nvim/init.lua", () => {
@@ -1448,10 +1356,7 @@ describe("protect-paths guardrail", () => {
         "System config directory — modifying config files directly can break applications",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "~/.config/nvim/init.lua", content: "lua" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: "~/.config/nvim/init.lua", content: "lua" }, true);
   });
 
   it("blocks edit on ~/.local/share/foo/bar", () => {
@@ -1462,10 +1367,7 @@ describe("protect-paths guardrail", () => {
         "System local data directory — modifying files here can break installed applications",
       );
 
-    const result = ctx.matchCall(
-      makeCall("edit", { path: "~/.local/share/foo/bar", newText: "data" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "edit", { path: "~/.local/share/foo/bar", newText: "data" }, true);
   });
 
   it("blocks write on ~/.local/share/foo/bar", () => {
@@ -1476,10 +1378,7 @@ describe("protect-paths guardrail", () => {
         "System local data directory — modifying files here can break installed applications",
       );
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "~/.local/share/foo/bar", content: "data" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "write", { path: "~/.local/share/foo/bar", content: "data" }, true);
   });
 
   it("allows write on src/main.ts", () => {
@@ -1503,10 +1402,7 @@ describe("protect-paths guardrail", () => {
       .input("path", ctx.regex(/^~\/.local\//))
       .block("Blocked");
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "src/main.ts", content: "export {}" }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "write", { path: "src/main.ts", content: "export {}" }, false);
   });
 });
 
@@ -1515,106 +1411,50 @@ describe("protect-paths guardrail", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("testing guardrail", () => {
+  const tempCtx = new GuardrailContext();
+  const skipRegex = tempCtx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/);
+  const skipReason =
+    "skipped tests create blind spots. Fix, delete, or use `it.todo()` instead";
+
   beforeEach(() => {
     ctx = new GuardrailContext();
   });
 
   it("blocks write with .skip(", () => {
-    ctx
-      .tool("write")
-      .input(
-        "content",
-        ctx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/),
-      )
-      .block(
-        "skipped tests create blind spots. Fix, delete, or use `it.todo()` instead",
-      );
-
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content: "it.skip('failing test', () => {});",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("write").input("content", skipRegex).block(skipReason);
+    assertCall(ctx, "write", {
+      path: "/tmp/test.ts",
+      content: "it.skip('failing test', () => {});",
+    }, true);
   });
 
   it("blocks write with describe.skip", () => {
-    ctx
-      .tool("write")
-      .input(
-        "content",
-        ctx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/),
-      )
-      .block(
-        "skipped tests create blind spots. Fix, delete, or use `it.todo()` instead",
-      );
-
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content: "describe.skip('skipped suite', () => {});",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("write").input("content", skipRegex).block(skipReason);
+    assertCall(ctx, "write", {
+      path: "/tmp/test.ts",
+      content: "describe.skip('skipped suite', () => {});",
+    }, true);
   });
 
   it("blocks edit with xdescribe", () => {
-    ctx
-      .tool("edit")
-      .input(
-        "newText",
-        ctx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/),
-      )
-      .block(
-        "skipped tests create blind spots. Fix, delete, or use `it.todo()` instead",
-      );
-
-    const result = ctx.matchCall(
-      makeCall("edit", {
-        path: "/tmp/test.ts",
-        newText: "xdescribe('suite', () => {})",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("edit").input("newText", skipRegex).block(skipReason);
+    assertCall(ctx, "edit", {
+      path: "/tmp/test.ts",
+      newText: "xdescribe('suite', () => {})",
+    }, true);
   });
 
   it("blocks write with xit(", () => {
-    ctx
-      .tool("write")
-      .input(
-        "content",
-        ctx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/),
-      )
-      .block(
-        "skipped tests create blind spots. Fix, delete, or use `it.todo()` instead",
-      );
-
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content: "xit('failing test', () => {})",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("write").input("content", skipRegex).block(skipReason);
+    assertCall(ctx, "write", {
+      path: "/tmp/test.ts",
+      content: "xit('failing test', () => {})",
+    }, true);
   });
 
   it("allows write with normal test content", () => {
-    ctx
-      .tool("write")
-      .input(
-        "content",
-        ctx.regex(/\.skip\b|\bdescribe\.skip\b|\bxdescribe\b|\bxit\(/),
-      )
-      .block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content: "it('passes', () => {});",
-      }),
-    );
-    expect(result).toBeUndefined();
+    ctx.tool("write").input("content", skipRegex).block("Blocked");
+    assertCall(ctx, "write", { path: "/tmp/test.ts", content: "it('passes', () => {});" }, false);
   });
 });
 
@@ -1623,50 +1463,30 @@ describe("testing guardrail", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("typescript-only guardrail", () => {
+  const tsReason = "this project uses TypeScript. Create `.ts` files instead";
+
   beforeEach(() => {
     ctx = new GuardrailContext();
   });
 
   it("blocks write on .js file", () => {
-    ctx
-      .tool("write")
-      .input("path", ctx.glob("*.js"))
-      .block("this project uses TypeScript. Create `.ts` files instead");
-
-    const result = ctx.matchCall(
-      makeCall("write", { path: "file.js", content: "export {}" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("write").input("path", ctx.glob("*.js")).block(tsReason);
+    assertCall(ctx, "write", { path: "file.js", content: "export {}" }, true);
   });
 
   it("blocks edit on .js file", () => {
-    ctx
-      .tool("edit")
-      .input("path", ctx.glob("*.js"))
-      .block("this project uses TypeScript. Create `.ts` files instead");
-
-    const result = ctx.matchCall(
-      makeCall("edit", { path: "lib.js", newText: "export {}" }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("edit").input("path", ctx.glob("*.js")).block(tsReason);
+    assertCall(ctx, "edit", { path: "lib.js", newText: "export {}" }, true);
   });
 
   it("allows write on .ts file", () => {
     ctx.tool("write").input("path", ctx.glob("*.js")).block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("write", { path: "file.ts", content: "export {}" }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "write", { path: "file.ts", content: "export {}" }, false);
   });
 
   it("allows edit on .ts file", () => {
     ctx.tool("edit").input("path", ctx.glob("*.js")).block("Blocked");
-
-    const result = ctx.matchCall(
-      makeCall("edit", { path: "lib.ts", newText: "export {}" }),
-    );
-    expect(result).toBeUndefined();
+    assertCall(ctx, "edit", { path: "lib.ts", newText: "export {}" }, false);
   });
 });
 
@@ -1690,8 +1510,7 @@ describe("vitest guardrail", () => {
         "`bun test` invokes Bun's built-in test runner, not Vitest. Use `bun vitest run` instead",
       );
 
-    const result = ctx.matchCall(makeCall("bash", { command: "bun test" }));
-    expect(result).toMatchObject({ block: true });
+    assertCall(ctx, "bash", { command: "bun test" }, true);
   });
 
   it("allows bash `vitest` (not `bun test`)", () => {
@@ -1703,8 +1522,7 @@ describe("vitest guardrail", () => {
       )
       .block("Blocked");
 
-    const result = ctx.matchCall(makeCall("bash", { command: "vitest" }));
-    expect(result).toBeUndefined();
+    assertCall(ctx, "bash", { command: "vitest" }, false);
   });
 });
 
@@ -1713,53 +1531,478 @@ describe("vitest guardrail", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("no-fallow-ignore guardrail", () => {
+  const fallowReason =
+    "fallow-ignore comments suppress code quality checks. Fix the underlying issue instead";
+
   beforeEach(() => {
     ctx = new GuardrailContext();
   });
 
   it("blocks write with fallow-ignore in content", () => {
-    ctx
-      .tool("write")
-      .input("content", ctx.regex(/fallow-ignore/))
-      .block(
-        "fallow-ignore comments suppress code quality checks. Fix the underlying issue instead",
-      );
-
-    const result = ctx.matchCall(
-      makeCall("write", {
-        path: "/tmp/test.ts",
-        content: "// fallow-ignore: FIXME need to fix this",
-      }),
-    );
-    expect(result).toMatchObject({ block: true });
+    ctx.tool("write").input("content", ctx.regex(/fallow-ignore/)).block(fallowReason);
+    assertCall(ctx, "write", {
+      path: "/tmp/test.ts",
+      content: "// fallow-ignore: FIXME need to fix this",
+    }, true);
   });
 
   it("blocks edit with fallow-ignore in newText", () => {
-    ctx
-      .tool("edit")
-      .input("newText", ctx.regex(/fallow-ignore/))
-      .block(
-        "fallow-ignore comments suppress code quality checks. Fix the underlying issue instead",
-      );
+    ctx.tool("edit").input("newText", ctx.regex(/fallow-ignore/)).block(fallowReason);
+    assertCall(ctx, "edit", {
+      path: "/tmp/test.ts",
+      newText: "// fallow-ignore: old code",
+    }, true);
+  });
 
-    const result = ctx.matchCall(
-      makeCall("edit", {
-        path: "/tmp/test.ts",
-        newText: "// fallow-ignore: old code",
-      }),
+  it("allows write with normal content", () => {
+    ctx.tool("write").input("content", ctx.regex(/fallow-ignore/)).block("Blocked");
+    assertCall(ctx, "write", { path: "/tmp/test.ts", content: "export {}" }, false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Edge cases: handlePreAction, handlePostRun, handlePostRewrite
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("handlePreAction edge cases", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("returns undefined for run action with no command", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .run("");
+
+    assertCall(ctx, "bash", { command: "rm foo.txt" }, false);
+  });
+
+  it("returns undefined for run action when timing is not 'before'", () => {
+    ctx.preRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      timing: "after",
+      action: "run",
+      command: "echo hello",
+    });
+
+    assertCall(ctx, "bash", { command: "rm foo.txt" }, false);
+  });
+
+  it("returns undefined for unknown action", () => {
+    ctx.preRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      timing: "before",
+      action: "unknown" as any,
+    });
+
+    assertCall(ctx, "bash", { command: "rm foo.txt" }, false);
+  });
+
+  it("returns undefined for default case in handlePreAction", () => {
+    ctx.preRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      timing: "before",
+      action: "block",
+    });
+
+    // block is handled, but confirm is also handled. Default covers unknown actions.
+    const result = ctx.matchCall(makeCall("bash", { command: "rm foo.txt" }));
+    expect(result).toBeDefined();
+  });
+});
+
+describe("handlePostAction edge cases", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("returns undefined when run action has no command", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .output(ctx.anyToken())
+      .run("");
+
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm foo.txt" },
+      "output",
+      false,
+    );
+  });
+
+  it("returns undefined when run command is undefined", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .output(ctx.anyToken())
+      .run(undefined as any);
+
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm foo.txt" },
+      "output",
+      false,
+    );
+  });
+
+  it("returns undefined when rewriteFn is falsy", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .output(ctx.anyToken())
+      .rewrite(undefined as any);
+
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm foo.txt" },
+      "output",
+      false,
+    );
+  });
+
+  it("returns undefined for unknown post action", () => {
+    ctx.postRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      outputMatcher: ctx.anyToken(),
+      timing: "after",
+      action: "unknown" as any,
+    });
+
+    assertResult(
+      ctx,
+      "bash",
+      { command: "rm foo.txt" },
+      "output",
+      false,
+    );
+  });
+});
+
+describe("handleErrorAction edge cases", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("handles error_run action", () => {
+    ctx
+      .tool("bash")
+      .error(ctx.regex(/error/i))
+      .run("echo 'error occurred'");
+
+    const result = ctx.matchError({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "test" },
+      content: [{ type: "text", text: "Error occurred" }],
+      isError: true,
+    } as unknown as ToolResultEvent);
+
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("error occurred") }],
+    });
+  });
+
+  it("handles error_rewrite action", () => {
+    ctx
+      .tool("bash")
+      .error(ctx.regex(/error/i))
+      .rewrite((event) => ({
+        content: event.content?.map((c) =>
+          c.type === "text"
+            ? { ...c, text: c.text.replace(/error/gi, "issue") }
+            : c,
+        ),
+      }));
+
+    const result = ctx.matchError({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "test" },
+      content: [{ type: "text", text: "Error in code" }],
+      isError: true,
+    } as unknown as ToolResultEvent);
+
+    expect(result?.content).toEqual([
+      { type: "text", text: "issue in code" },
+    ]);
+  });
+
+  it("error_run returns undefined when command is empty", () => {
+    ctx
+      .tool("bash")
+      .error(ctx.regex(/error/i))
+      .run("");
+
+    assertErrorNoBlock(ctx, { command: "test" }, "Error occurred");
+  });
+
+  it("error_rewrite returns undefined when rewriteFn is falsy", () => {
+    ctx
+      .tool("bash")
+      .error(ctx.regex(/error/i))
+      .rewrite(undefined as any);
+
+    assertErrorNoBlock(ctx, { command: "test" }, "Error occurred");
+  });
+
+  it("returns undefined for unknown error action", () => {
+    ctx.errorRules.push({
+      toolName: "bash",
+      inputConditions: [],
+      outputMatcher: ctx.anyToken(),
+      timing: "after",
+      action: "unknown" as any,
+    });
+
+    assertErrorNoBlock(ctx, { command: "test" }, "Error occurred");
+  });
+});
+
+describe("evaluateConditions edge cases", () => {
+  beforeEach(() => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .block("Blocked");
+  });
+
+  it("returns false when input value is undefined", () => {
+    assertCall(ctx, "bash", { command: undefined }, false);
+  });
+
+  it("returns false when input value is null", () => {
+    assertCall(ctx, "bash", { command: null }, false);
+  });
+
+  it("returns false when no input key matches", () => {
+    assertCall(ctx, "bash", { cmd: "rm foo.txt" }, false);
+  });
+
+  it("returns true when all conditions pass (empty conditions)", () => {
+    // This is already tested via other tests, but let's be explicit
+    const freshCtx = new GuardrailContext();
+    const result = freshCtx.matchCall(makeCall("bash", { command: "rm foo.txt" }));
+    expect(result).toBeUndefined(); // no rules defined
+  });
+
+  it("handles non-string input values via String()", () => {
+    assertCall(ctx, "bash", { command: 42 }, false);
+  });
+});
+
+describe("matchesOutputRule edge cases", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("returns true when outputMatcher is null", () => {
+    ctx.postRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      outputMatcher: null,
+      timing: "after",
+      action: "block",
+      reason: "Blocked",
+    });
+
+    const result = ctx.matchResult(
+      makeResult("bash", { command: "rm foo.txt" }, "output"),
     );
     expect(result).toMatchObject({ block: true });
   });
 
-  it("allows write with normal content", () => {
-    ctx
-      .tool("write")
-      .input("content", ctx.regex(/fallow-ignore/))
-      .block("Blocked");
+  it("returns true when event.content is missing", () => {
+    ctx.postRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      outputMatcher: ctx.anyToken(),
+      timing: "after",
+      action: "block",
+      reason: "Blocked",
+    });
 
-    const result = ctx.matchCall(
-      makeCall("write", { path: "/tmp/test.ts", content: "export {}" }),
+    const result = ctx.matchResult({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "rm foo.txt" },
+      content: [],
+      isError: false,
+    } as unknown as ToolResultEvent);
+
+    // With empty content, extractTextFromContent returns ""
+    // tokenizeBash("") returns [] (empty segments)
+    // segments.length === 0 → returns false → no match
+    expect(result).toBeUndefined();
+  });
+
+  it("returns true when event.content is undefined", () => {
+    ctx.postRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      outputMatcher: ctx.anyToken(),
+      timing: "after",
+      action: "block",
+      reason: "Blocked",
+    });
+
+    const result = ctx.matchResult({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "rm foo.txt" },
+      content: undefined as any,
+      isError: false,
+    } as unknown as ToolResultEvent);
+
+    // !event.content → true → matchesOutputRule returns true
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("returns false when tokenizer produces no segments", () => {
+    ctx.postRules.push({
+      toolName: "bash",
+      inputConditions: [{ key: "command", matcher: ctx.bash.word("rm") }],
+      outputMatcher: ctx.anyToken(),
+      timing: "after",
+      action: "block",
+      reason: "Blocked",
+    });
+
+    const result = ctx.matchResult({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "rm foo.txt" },
+      content: [{ type: "text", text: "" }],
+      isError: false,
+    } as unknown as ToolResultEvent);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("matches regex against full text even if tokens don't match individually", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.bash.word("echo"))
+      .output(ctx.regex(/signal 11/i))
+      .block("Crash detected");
+
+    const result = ctx.matchResult(
+      makeResult("bash", { command: "echo signal 11" }, "signal 11"),
     );
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("uses bash tokenizer by default for output matchers without tokenizer", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.bash.word("echo"))
+      .output(ctx.bash.word("rm"))
+      .block("rm in output");
+
+    const result = ctx.matchResult(
+      makeResult("bash", { command: "echo rm" }, "rm"),
+    );
+    expect(result).toMatchObject({ block: true });
+  });
+});
+
+describe("context helper methods", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("regex creates regex matcher", () => {
+    const m = ctx.regex(/test/);
+    expect(typeof m.match).toBe("function");
+    expect(typeof m.tryMatch).toBe("function");
+  });
+
+  it("glob creates glob matcher", () => {
+    const m = ctx.glob("*.ts");
+    expect(typeof m.match).toBe("function");
+    expect(typeof m.tryMatch).toBe("function");
+  });
+
+  it("anyToken creates anyToken matcher", () => {
+    const m = ctx.anyToken();
+    expect(typeof m.match).toBe("function");
+    expect(typeof m.tryMatch).toBe("function");
+  });
+
+  it("seq wraps seq", () => {
+    const m = ctx.seq(ctx.bash.word("rm"), ctx.star());
+    expect(typeof m.match).toBe("function");
+    expect(typeof m.tryMatch).toBe("function");
+  });
+
+  it("star wraps star", () => {
+    const m = ctx.star();
+    expect((m as any).__star).toBe(true);
+  });
+
+  it("spread wraps spread", () => {
+    const m = ctx.spread();
+    expect((m as any).__spread).toBe(true);
+  });
+
+  it("contains wraps contains", () => {
+    const m = ctx.contains(ctx.bash.word("rm"));
+    expect(typeof m.match).toBe("function");
+  });
+
+  it("builder context has bash, nu, sql matchers", () => {
+    expect(typeof ctx.bash.word).toBe("function");
+    expect(typeof ctx.nu.word).toBe("function");
+    expect(typeof ctx.sql.word).toBe("function");
+  });
+});
+
+describe("tool().error() with input conditions", () => {
+  beforeEach(() => {
+    ctx = new GuardrailContext();
+  });
+
+  it("error rules with input conditions", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .error(ctx.regex(/error/i))
+      .block("rm error");
+
+    const result = ctx.matchError({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "rm foo.txt" },
+      content: [{ type: "text", text: "Error: not found" }],
+      isError: true,
+    } as unknown as ToolResultEvent);
+
+    expect(result).toMatchObject({ block: true, reason: "rm error" });
+  });
+
+  it("error rules with input conditions do not match non-matching input", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .error(ctx.regex(/error/i))
+      .block("rm error");
+
+    const result = ctx.matchError({
+      toolCallId: "1",
+      toolName: "bash",
+      input: { command: "ls" },
+      content: [{ type: "text", text: "Error: not found" }],
+      isError: true,
+    } as unknown as ToolResultEvent);
+
     expect(result).toBeUndefined();
   });
 });

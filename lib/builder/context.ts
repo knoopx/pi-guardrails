@@ -172,7 +172,7 @@ export class GuardrailContext {
         return preBuilder;
       },
       error: (matcher: Matcher) => {
-        return createErrorBuilder(matcher);
+        return createErrorBuilder(matcher, [...conditions]);
       },
     };
 
@@ -229,14 +229,15 @@ export class GuardrailContext {
     };
 
     // Error input builder: after .error(), can .block/.confirm/.run/.rewrite
-    const createErrorBuilder = (outputMatcher: Matcher): ErrorActionBuilder => {
-      const conditions: InputCondition[] = [];
-
+    const createErrorBuilder = (
+      outputMatcher: Matcher,
+      initialConditions: InputCondition[] = [],
+    ): ErrorActionBuilder => {
       return {
         block: (reason) => {
           this.errorRules.push({
             toolName,
-            inputConditions: [...conditions],
+            inputConditions: [...initialConditions],
             outputMatcher,
             timing: "after",
             action: "error_block",
