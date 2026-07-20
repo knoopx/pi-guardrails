@@ -26,6 +26,17 @@ export default guardrails((ctx) => {
 
 Each rule: `ctx.tool("toolName").input(key, matcher).action("reason")`
 
+The builder chain exposes four typed interfaces:
+
+| Builder | Methods |
+|---------|---------|
+| `ToolMatcherBuilder` (from `.tool(name)`) | `.input(key, matcher)`, `.output(matcher)`, `.error(matcher)` |
+| `InputBuilder` (from `.input()`) | `.block(reason)`, `.confirm(reason)`, `.run(command)`, `.output(matcher)`, `.input(key, matcher)`, `.error(matcher)` |
+| `PostExecutionActionBuilder` (from `.output()`) | `.block(reason)`, `.confirm(reason)`, `.run(command)`, `.rewrite(fn)`, `.input(key, matcher)` |
+| `ErrorActionBuilder` (from `.error()`) | `.block(reason)`, `.confirm(reason)`, `.run(command)`, `.rewrite(fn)` |
+
+The `.rewrite(fn)` method accepts a `RewriteFn`: `(event: ToolResultEvent) => ToolResultEventResult | undefined`.
+
 ### 3. Verify it loads
 
 Run `pi` — if the directory exists under `~/.pi/agent/extensions/`, it auto-loads.
@@ -162,6 +173,33 @@ Chain: `ctx.tool(name) → .error(matcher) → [action]`
 
 The `.error()` matcher matches against `event.content` text. Regex matchers test the full text; tokenized matchers (e.g., `ctx.seq(ctx.nu.word("Traceback"))`) tokenize with the tagged tokenizer. Error rules fire before post-execution rules — if an error rule matches and acts, the post-execution rules are skipped.
 
+### Standalone evaluation
+
+The `GuardrailContext` exposes three evaluation methods for programmatic use:
+
+| Method | Description |
+|--------|-------------|
+| `ctx.matchCall(event)` | Evaluate pre-execution rules against a `ToolCallEvent`. Returns `ToolCallEventResult` or `undefined`. |
+| `ctx.matchResult(event)` | Evaluate post-execution rules against a `ToolResultEvent`. Returns `ToolResultEventResult` or `undefined`. |
+| `ctx.matchError(event)` | Evaluate error rules against a `ToolResultEvent` (only fires when `event.isError === true`). Returns `ToolResultEventResult` or `undefined`. |
+
+These methods return `undefined` when no rule matches, allowing early bailouts.
+
+### Event types
+
+Tool events follow a consistent shape. Pre-execution receives `ToolCallEvent` with `toolName`, `toolCallId`, and `input` (keys vary by tool). Post-execution and error rules receive `ToolResultEvent` which adds `content: (TextContent | ImageContent)[]`, `isError: boolean`, and optional `details`.
+
+| Tool | Input keys |
+|------|----------|
+| `bash` | `command: string` |
+| `read` | `path: string` |
+| `edit` | `path: string`, `oldText: string`, `newText: string` |
+| `write` | `path: string`, `content: string` |
+| `grep` | `pattern: string`, `path: string` |
+| `find` | `path: string` |
+| `ls` | `path: string` |
+| custom | arbitrary `Record<string, unknown>` |
+
 ## Matcher Primitives
 
 ### Tokenizer namespaces
@@ -175,8 +213,8 @@ Uses `shell-quote` for proper shell parsing. Splits into segments on `||`, `&&`,
 | Token type | Description | Example |
 |------------|-------------|---------|
 | `word` | Regular token | `rm`, `-rf`, `foo.txt`, `*` |
-| `env` | Variable assignment (stripped) | `PATH=foo` → stripped as env |
-| `wrapper` | Command wrapper (stripped) | `env`, `command`, `exec`, `nohup`, `nice`, `time` |
+| `env` | Variable assignment (`KEY=value`) — stripped only from the **leading** position of a segment | `PATH=foo rm file` → segment starts with `rm` |
+| `wrapper` | Command wrapper (`env`, `command`, `exec`, etc.) — stripped only from the **leading** position of a segment | `sudo rm file` → segment starts with `rm` |
 | `operator` | Shell operator | `>`, `<`, `>>`, `&`, `!` |
 
 - Quotes preserved: `'pattern with spaces'` → single token
@@ -232,16 +270,17 @@ ctx.contains(ctx.sql.word("CASE"), ctx.sql.word("THEN"), ctx.sql.word("0"))
 
 ### Combinators
 
-Combinators compose matchers. The context exposes `seq`, `star`, `spread`, and `contains`:
+Combinators compose matchers. The context exposes `seq`, `star`, `spread`, `contains`, and `anyOf`:
 
 | Combinator | Description | Example |
 |------------|-------------|---------|
-| `seq(...)` | Sequence matchers in order, with backtracking for `star`/`spread`/`repeat` | `ctx.seq(ctx.bash.word("rm"), ctx.star())` |
-| `star()` | Zero-width wildcard — always matches but consumes zero tokens; relies on backtracking to try all positions | `ctx.star()` |
+| `seq(...)` | Sequence matchers in order, with backtracking for `star`/`spread` | `ctx.seq(ctx.bash.word("rm"), ctx.star())` |
+| `star()` | Zero-width wildcard — always matches and consumes zero tokens; backtracking in `seq` tries all positions after it | `ctx.star()` |
 | `spread()` | Backtracking wildcard — tries all positions before the next matcher | `ctx.seq(ctx.bash.word("dd"), ctx.spread(), ctx.bash.word("if="))` |
 | `contains(...)` | Find the target sequence anywhere in the tokens. On match, consumes all tokens from the match point onward. | `ctx.contains(ctx.bash.word("rm"))` |
+| `anyOf(...)` | Try each matcher in order; return the first match | `ctx.anyOf(ctx.bash.word("rm"), ctx.bash.word("unlink"))` |
 
-Additional combinators (`anyOf`, `repeat`, `repeat1`, `opt`, `exact`, `prefixed`) exist in `lib/matchers/combinators.ts` but are not exposed on the context. Use `seq` + `star`/`spread` as building blocks.
+Additional combinators (`repeat`, `repeat1`, `opt`, `exact`, `prefixed`) exist in `lib/matchers/combinators.ts` but are not exposed on the context. Use `seq` + `star`/`spread` as building blocks.
 
 ### Standalone matchers
 
@@ -250,7 +289,7 @@ Additional combinators (`anyOf`, `repeat`, `repeat1`, `opt`, `exact`, `prefixed`
 | `ctx.regex(re)` | Regex with RegExp literal | `ctx.regex(/^https:\/\//)` |
 | `ctx.glob(pattern)` | Glob path matching (picomatch) | `ctx.glob("~/.config/**")` |
 | `ctx.anyToken()` | Matches any single token | `ctx.anyToken()` |
-| `ctx.path()` | Token starts with `/` | `ctx.path()` |
+| `ctx.path()` | Token starts with `/` | — not exposed on `ctx`; import `path` from `pi-guardrails/lib/matchers/primitives.js` |
 
 **Note:** `word()` uses case-insensitive *exact* matching — `word("rm")` matches the token `rm` but does NOT match `form` or `armor`. Use `contains()` for search across tokens, or `regex()` for full pattern matching.
 
@@ -315,7 +354,22 @@ The extension auto-loads guardrails settings (enabled/disabled state) on startup
 
 The library provides standalone handler functions that operate on a `GuardrailContext` without requiring the extension lifecycle. These are useful for testing, custom integrations, or building custom tool wrappers.
 
-These functions are not re-exported from the package's default entry but can be imported from their internal paths:
+These functions are not re-exported from the package's default entry but can be imported from their internal paths. For most use cases, use the `GuardrailContext.matchCall/matchResult/matchError` methods directly — they delegate to the same logic:
+
+```ts
+import { GuardrailContext } from "pi-guardrails/lib/builder/context.js";
+import type { ToolCallEvent, ToolResultEvent } from "pi-guardrails/lib/builder/events.js";
+
+const ctx = new GuardrailContext();
+ctx.tool("bash").input("command", ctx.seq(ctx.bash.word("rm"), ctx.star())).block("Use trash");
+
+// Evaluate a tool call
+const result = ctx.matchCall({
+  toolName: "bash",
+  toolCallId: "abc",
+  input: { command: "rm -rf /" },
+});
+```
 
 ```ts
 // Internal — not part of the public API
