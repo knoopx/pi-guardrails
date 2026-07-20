@@ -85,7 +85,8 @@ function matchTokens(
   }
 
   if (pat.kind === "single")
-    return matchTokens(pattern, tokens, pi + 1, ti + 1);
+    return ti < tokens.length && matchTokens(pattern, tokens, pi + 1, ti + 1);
+  if (ti >= tokens.length) return false;
   const actual = getComparableToken(tokens, ti);
 
   if (pat.kind === "or")
@@ -107,8 +108,11 @@ function matchTokens(
 }
 
 function getComparableToken(tokens: Token[], tokenIndex: number): string {
+  if (tokenIndex >= tokens.length || !tokens[tokenIndex]) return "";
   if (tokenIndex === 0)
-    return tokens[tokenIndex].value.split("/").pop() || tokens[tokenIndex].value;
+    return (
+      tokens[tokenIndex].value.split("/").pop() || tokens[tokenIndex].value
+    );
 
   return tokens[tokenIndex].value;
 }
@@ -134,7 +138,11 @@ function normalizePathToken(token: string | undefined): string | undefined {
 function matchLiteralToken(actual: string, expected: string): boolean {
   if (!expected.includes("*")) {
     // For path-like tokens (starting with / or ~), normalize before comparing
-    if (expected.startsWith("/") || expected.startsWith("~/") || expected === "~") {
+    if (
+      expected.startsWith("/") ||
+      expected.startsWith("~/") ||
+      expected === "~"
+    ) {
       return normalizePathToken(actual) === normalizePathToken(expected);
     }
     return actual === expected;
@@ -146,10 +154,7 @@ function matchLiteralToken(actual: string, expected: string): boolean {
   return new RegExp(`^${escaped}$`).test(actual);
 }
 
-export function matchCommandPattern(
-  command: string,
-  pattern: string,
-): boolean {
+export function matchCommandPattern(command: string, pattern: string): boolean {
   const segments = tokenizeBash(command);
   const patternTokens = parsePattern(pattern);
   if (patternTokens.length === 0) return false;
