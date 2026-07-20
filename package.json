@@ -25,10 +25,9 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.10",
-    "@leeoniya/ufuzzy": "^1.0.19",
+    "shell-quote": "^1.10.0",
     "@types/shell-quote": "^1.7.5",
-    "picomatch": "^4.0.5",
-    "shell-quote": "^1.10.0"
+    "picomatch": "^4.0.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
