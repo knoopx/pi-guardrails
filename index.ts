@@ -4,6 +4,7 @@ import { createGuardrailsHandler } from "./lib/handlers.js";
 import { GuardrailContext } from "./lib/builder/context.js";
 
 export type { GuardrailContext } from "./lib/builder/context.js";
+export type { ErrorRule } from "./lib/builder/rules.js";
 
 /**
  * SDK entry point: pass a builder callback and get a configured PI extension.
@@ -19,14 +20,13 @@ export type { GuardrailContext } from "./lib/builder/context.js";
  * });
  * ```
  */
-export function guardrails(
-  rules: (ctx: GuardrailContext) => void,
-) {
+export function guardrails(rules: (ctx: GuardrailContext) => void) {
   return async function extension(pi: ExtensionAPI) {
     await configLoader.load();
 
     pi.registerCommand("guardrails", {
-      description: "Toggle guardrails with on|off (usage: /guardrails [on|off])",
+      description:
+        "Toggle guardrails with on|off (usage: /guardrails [on|off])",
       handler: createGuardrailsHandler(configLoader),
     });
 
@@ -43,7 +43,7 @@ export function guardrails(
 
       const ctx = new GuardrailContext();
       rules(ctx);
-      return ctx.matchResult(event);
+      return ctx.matchError(event) ?? ctx.matchResult(event);
     });
   };
 }

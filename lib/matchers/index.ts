@@ -8,7 +8,18 @@
 
 export { type MatchResult, type Matcher } from "./types.js";
 export { word, regex, anyToken, path } from "./primitives.js";
-export { seq, anyOf, repeat, repeat1, opt, exact, star, spread, contains, prefixed } from "./combinators.js";
+export {
+  seq,
+  anyOf,
+  repeat,
+  repeat1,
+  opt,
+  exact,
+  star,
+  spread,
+  contains,
+  prefixed,
+} from "./combinators.js";
 
 export { tokenizeBash } from "./tokenizers/bash.js";
 export { tokenizeSql } from "./tokenizers/sql.js";
