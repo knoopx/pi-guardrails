@@ -26,7 +26,10 @@ function parseRawString(command: string, i: number): [string, number] {
  * Parse a single-quoted string with escape sequences (backslash).
  * Returns [content, newI].
  */
-function parseSingleQuotedString(command: string, start: number): [string, number] {
+function parseSingleQuotedString(
+  command: string,
+  start: number,
+): [string, number] {
   let content = "";
   let i = start;
   while (i < command.length) {
@@ -61,7 +64,10 @@ function parseDoubleQuotedId(command: string, start: number): [string, number] {
  * Consume a word character sequence (identifier or number).
  * Returns [chars, newI].
  */
-function parseWordCharSequence(command: string, start: number): [string, number] {
+function parseWordCharSequence(
+  command: string,
+  start: number,
+): [string, number] {
   let chars = "";
   let i = start;
   while (i < command.length && WORD_CHAR.test(command[i])) {
@@ -75,11 +81,28 @@ function parseWordCharSequence(command: string, start: number): [string, number]
  * Character classification — which category does this character belong to?
  * Takes the command string and index so it can look ahead for raw strings.
  */
-type CharKind = "rawString" | "singleQuoted" | "doubleQuoted" | "whitespace" | "operator" | "closingParen" | "wordChar" | "pipe" | "other";
+type CharKind =
+  | "rawString"
+  | "singleQuoted"
+  | "doubleQuoted"
+  | "whitespace"
+  | "operator"
+  | "closingParen"
+  | "wordChar"
+  | "pipe"
+  | "other";
 
-function classifyChar(command: string, i: number, prevIsStart: boolean): CharKind {
-  if (prevIsStart && (command[i] === "r" || command[i] === "R")
-      && i + 1 < command.length && command[i + 1] === "'") {
+function classifyChar(
+  command: string,
+  i: number,
+  prevIsStart: boolean,
+): CharKind {
+  if (
+    prevIsStart &&
+    (command[i] === "r" || command[i] === "R") &&
+    i + 1 < command.length &&
+    command[i + 1] === "'"
+  ) {
     return "rawString";
   }
   if (command[i] === "'") return "singleQuoted";
