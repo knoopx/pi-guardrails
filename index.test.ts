@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ToolCallEvent, ToolResultEvent } from "./lib/builder/events.js";
 import guardrails from "./index.js";
+import {
+  handleToolError,
+  createHandler,
+  composeContexts,
+} from "./lib/handlers.js";
+import { GuardrailContext } from "./lib/builder/context.js";
 
 // Mock the config loader before importing anything else
 vi.mock("./lib/config/loader", () => ({
@@ -25,10 +31,20 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 }
 
 describe("guardrails extension", () => {
-  let mockLoader: { enabled: boolean; load: ReturnType<typeof vi.fn>; save: ReturnType<typeof vi.fn> };
-  let mockPi: { on: ReturnType<typeof vi.fn>; registerCommand: ReturnType<typeof vi.fn> };
+  let mockLoader: {
+    enabled: boolean;
+    load: () => Promise<void>;
+    save: () => Promise<void>;
+  };
+  let mockPi: {
+    on: ReturnType<typeof vi.fn>;
+    registerCommand: ReturnType<typeof vi.fn>;
+  };
   let toolCallHandler: (event: ToolCallEvent, ctx: unknown) => Promise<unknown>;
-  let toolResultHandler: (event: ToolResultEvent, ctx: unknown) => Promise<unknown>;
+  let toolResultHandler: (
+    event: ToolResultEvent,
+    ctx: unknown,
+  ) => Promise<unknown>;
 
   beforeEach(async () => {
     // Get the mocked loader
@@ -37,8 +53,16 @@ describe("guardrails extension", () => {
 
     mockPi = {
       on: vi.fn().mockImplementation((event, handler) => {
-        if (event === "tool_call") toolCallHandler = handler as (event: ToolCallEvent, ctx: unknown) => Promise<unknown>;
-        if (event === "tool_result") toolResultHandler = handler as (event: ToolResultEvent, ctx: unknown) => Promise<unknown>;
+        if (event === "tool_call")
+          toolCallHandler = handler as (
+            event: ToolCallEvent,
+            ctx: unknown,
+          ) => Promise<unknown>;
+        if (event === "tool_result")
+          toolResultHandler = handler as (
+            event: ToolResultEvent,
+            ctx: unknown,
+          ) => Promise<unknown>;
       }),
       registerCommand: vi.fn(),
     };
@@ -58,16 +82,16 @@ describe("guardrails extension", () => {
 
   /** Call the tool_call handler with any tool. */
   async function callTool(toolName: string, input: Record<string, unknown>) {
-    return toolCallHandler!(
-      { toolCallId: "1", toolName, input },
-      makeCtx(),
-    );
+    return toolCallHandler!({ toolCallId: "1", toolName, input }, makeCtx());
   }
 
   it("registers the guardrails command", () => {
-    expect(mockPi.registerCommand).toHaveBeenCalledWith("guardrails", expect.objectContaining({
-      handler: expect.any(Function),
-    }));
+    expect(mockPi.registerCommand).toHaveBeenCalledWith(
+      "guardrails",
+      expect.objectContaining({
+        handler: expect.any(Function),
+      }),
+    );
   });
 
   it("sets up tool_call hook", () => {
@@ -105,7 +129,11 @@ describe("guardrails extension", () => {
     });
 
     it("passes non-matching edit commands", async () => {
-      const result = await callTool("edit", { path: "test.ts", oldText: "", newText: "" });
+      const result = await callTool("edit", {
+        path: "test.ts",
+        oldText: "",
+        newText: "",
+      });
       expect(result).toBeUndefined();
     });
   });
@@ -134,22 +162,30 @@ describe("guardrails extension", () => {
 
   describe("duckdb-eval tool_call hook", () => {
     it("blocks read_csv_auto with tilde path", async () => {
-      const result = await callTool("duckdb-eval", { command: "SELECT * FROM read_csv_auto('~/data.csv')" });
+      const result = await callTool("duckdb-eval", {
+        command: "SELECT * FROM read_csv_auto('~/data.csv')",
+      });
       expect(result).toBeUndefined();
     });
 
     it("blocks AUTO_DETECT ON", async () => {
-      const result = await callTool("duckdb-eval", { command: "read_csv_auto('file.csv', AUTO_DETECT ON)" });
+      const result = await callTool("duckdb-eval", {
+        command: "read_csv_auto('file.csv', AUTO_DETECT ON)",
+      });
       expect(result).toBeUndefined();
     });
 
     it("blocks string_to_split_to_array", async () => {
-      const result = await callTool("duckdb-eval", { command: "SELECT string_to_split_to_array(col, ',') FROM t" });
+      const result = await callTool("duckdb-eval", {
+        command: "SELECT string_to_split_to_array(col, ',') FROM t",
+      });
       expect(result).toBeUndefined();
     });
 
     it("passes valid duckdb queries", async () => {
-      const result = await callTool("duckdb-eval", { command: "SELECT name FROM users WHERE active = 1" });
+      const result = await callTool("duckdb-eval", {
+        command: "SELECT name FROM users WHERE active = 1",
+      });
       expect(result).toBeUndefined();
     });
   });
@@ -157,9 +193,15 @@ describe("guardrails extension", () => {
   describe("tool_result hook", () => {
     it("returns undefined when no rules match", async () => {
       const result = await toolResultHandler!(
-        { toolCallId: "1", toolName: "bash", input: { command: "ls" },
+        {
+          toolCallId: "1",
+          toolName: "bash",
+          input: { command: "ls" },
           content: [{ type: "text", text: "file.txt" }],
-          details: undefined, type: "tool_result", isError: false },
+          details: undefined,
+          type: "tool_result",
+          isError: false,
+        },
         makeCtx(),
       );
       expect(result).toBeUndefined();
@@ -298,15 +340,265 @@ describe("guardrails extension", () => {
 
   describe("command handler", () => {
     it("handles /guardrails on", async () => {
-      const cmd = mockPi.registerCommand.mock.calls.find((c: unknown[]) => c[0] === "guardrails")?.[1] as { handler: (args: string, ctx: unknown) => Promise<void> };
+      const cmd = mockPi.registerCommand.mock.calls.find(
+        (c: unknown[]) => c[0] === "guardrails",
+      )?.[1] as { handler: (args: string, ctx: unknown) => Promise<void> };
       await cmd.handler("on", makeCtx());
       expect(mockLoader.enabled).toBe(true);
     });
 
     it("handles /guardrails off", async () => {
-      const cmd = mockPi.registerCommand.mock.calls.find((c: unknown[]) => c[0] === "guardrails")?.[1] as { handler: (args: string, ctx: unknown) => Promise<void> };
+      const cmd = mockPi.registerCommand.mock.calls.find(
+        (c: unknown[]) => c[0] === "guardrails",
+      )?.[1] as { handler: (args: string, ctx: unknown) => Promise<void> };
       await cmd.handler("off", makeCtx());
       expect(mockLoader.enabled).toBe(false);
+    });
+  });
+
+  describe("error capture", () => {
+    it("fires error rules when isError is true", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/fault|dump/i))
+        .block("Tool crashed");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "./crashy" },
+        content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Tool crashed" });
+    });
+
+    it("does not fire error rules when isError is false", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/segfault/i))
+        .block("Tool crashed");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "ls" },
+        content: [{ type: "text", text: "file.txt" }],
+        isError: false,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("matches error content against regex", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/permission|Operation/i))
+        .block("Permission denied");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "chmod 777 /etc/passwd" },
+        content: [
+          {
+            type: "text",
+            text: "chmod: changing permissions of '/etc/passwd': Operation not permitted",
+          },
+        ],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Permission denied" });
+    });
+
+    it("matches error content with nu tokenizer", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("python-eval")
+        .error(ctx.seq(ctx.nu.word("Traceback")))
+        .block("Python traceback");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "python-eval",
+        input: { command: "print(x)" },
+        content: [
+          {
+            type: "text",
+            text: "Traceback (most recent call last):\n  File \"test.py\", line 1\n    print(x)\nNameError: name 'x' is not defined",
+          },
+        ],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Python traceback" });
+    });
+
+    it("passes non-matching error content", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/segfault/i))
+        .block("Tool crashed");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "ls" },
+        content: [{ type: "text", text: "file.txt" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("applies .rewrite() on error match", async () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/error/i))
+        .rewrite((event) => ({
+          content: event.content?.map((c) =>
+            c.type === "text"
+              ? { ...c, text: c.text + "\n\n💡 Check your syntax" }
+              : c,
+          ),
+        }));
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "gcc -o test test.c" },
+        content: [
+          { type: "text", text: "error: undefined reference to 'main'" },
+        ],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result?.content).toEqual([
+        {
+          type: "text",
+          text: "error: undefined reference to 'main'\n\n💡 Check your syntax",
+        },
+      ]);
+    });
+  });
+
+  describe("handler functions", () => {
+    it("handleToolError returns error rule result", () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/fault|dump/i))
+        .block("Tool crashed");
+
+      const result = handleToolError(ctx, {
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "./crashy" },
+        content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Tool crashed" });
+    });
+
+    it("handleToolError returns undefined when no error rule matches", () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/segfault/i))
+        .block("Tool crashed");
+
+      const result = handleToolError(ctx, {
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "ls" },
+        content: [{ type: "text", text: "file.txt" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("createHandler includes handleError", () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/fault|dump/i))
+        .block("Tool crashed");
+
+      const handler = createHandler(ctx);
+      expect(handler.handleError).toBeDefined();
+      expect(handler.handleCall).toBeDefined();
+      expect(handler.handleResult).toBeDefined();
+
+      const result = handler.handleError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "./crashy" },
+        content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Tool crashed" });
+    });
+
+    it("composeContexts includes handleError", () => {
+      const ctx1 = new GuardrailContext();
+      ctx1
+        .tool("bash")
+        .error(ctx1.regex(/fault|dump/i))
+        .block("Segfault");
+
+      const ctx2 = new GuardrailContext();
+      ctx2
+        .tool("bash")
+        .error(ctx2.regex(/core dump/i))
+        .block("Core dump");
+
+      const composed = composeContexts(ctx1, ctx2);
+      expect(composed.handleError).toBeDefined();
+
+      const result = composed.handleError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "./crashy" },
+        content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Segfault" });
+    });
+
+    it("error rules take precedence over post-execution rules", () => {
+      const ctx = new GuardrailContext();
+      ctx
+        .tool("bash")
+        .error(ctx.regex(/fault|dump/i))
+        .block("Error blocked");
+
+      // Also add a post-execution rule that would match the same content
+      ctx
+        .tool("bash")
+        .input("command", ctx.bash.word("./crashy"))
+        .output(ctx.regex(/fault|dump/i))
+        .block("Post-exec blocked");
+
+      const result = ctx.matchError({
+        toolCallId: "1",
+        toolName: "bash",
+        input: { command: "./crashy" },
+        content: [{ type: "text", text: "Segmentation fault (core dumped)" }],
+        isError: true,
+      } as unknown as ToolResultEvent);
+
+      expect(result).toEqual({ block: true, reason: "Error blocked" });
     });
   });
 });
