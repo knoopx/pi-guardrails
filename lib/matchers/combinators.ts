@@ -26,11 +26,19 @@ export function seq(...ms: Matcher[]): Matcher {
       : { ok: false },
   );
   const tokenizer = getInnerTokenizer(ms);
-  if (tokenizer) return Object.assign(m, { __tokenizer: tokenizer } as Matcher & { __tokenizer: Tokenizer });
+  if (tokenizer)
+    return Object.assign(m, { __tokenizer: tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
   return m;
 }
 
-function matchSeq(ms: Matcher[], tokens: Token[], mi: number, ti: number): boolean {
+function matchSeq(
+  ms: Matcher[],
+  tokens: Token[],
+  mi: number,
+  ti: number,
+): boolean {
   if (mi === ms.length) return true;
   const m = ms[mi];
   if (m.__spread) {
@@ -81,7 +89,10 @@ export function anyOf(...ms: Matcher[]): Matcher {
     return { ok: false };
   });
   const tokenizer = getInnerTokenizer(ms);
-  if (tokenizer) return Object.assign(m, { __tokenizer: tokenizer } as Matcher & { __tokenizer: Tokenizer });
+  if (tokenizer)
+    return Object.assign(m, { __tokenizer: tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
   return m;
 }
 
@@ -94,7 +105,11 @@ export function repeat(m: Matcher): Matcher {
     return { ok: true, consumed: end - from };
   });
   const tagged = m as Matcher & { __tokenizer?: Tokenizer };
-  if (tagged.__tokenizer) return Object.assign(obj, { __repeat: true, __tokenizer: tagged.__tokenizer } as Matcher & { __repeat: true; __tokenizer: Tokenizer });
+  if (tagged.__tokenizer)
+    return Object.assign(obj, {
+      __repeat: true,
+      __tokenizer: tagged.__tokenizer,
+    } as Matcher & { __repeat: true; __tokenizer: Tokenizer });
   return Object.assign(obj, { __repeat: true } as { __repeat: true });
 }
 
@@ -118,7 +133,10 @@ export function repeat1(m: Matcher): Matcher {
     return { ok: true, consumed: pos - from };
   });
   const tagged = m as Matcher & { __tokenizer?: Tokenizer };
-  if (tagged.__tokenizer) return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & { __tokenizer: Tokenizer });
+  if (tagged.__tokenizer)
+    return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
   return obj;
 }
 
@@ -131,7 +149,10 @@ export function opt(m: Matcher): Matcher {
     return r.ok ? r : { ok: true, consumed: 0 };
   });
   const tagged = m as Matcher & { __tokenizer?: Tokenizer };
-  if (tagged.__tokenizer) return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & { __tokenizer: Tokenizer });
+  if (tagged.__tokenizer)
+    return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
   return obj;
 }
 
@@ -140,9 +161,7 @@ export function opt(m: Matcher): Matcher {
  */
 export function exact(n: number): Matcher {
   return makeExact((tokens, from) =>
-    from + n <= tokens.length
-      ? { ok: true, consumed: n }
-      : { ok: false },
+    from + n <= tokens.length ? { ok: true, consumed: n } : { ok: false },
   );
 }
 
@@ -160,13 +179,18 @@ export function star(): Matcher {
  * Spread: backtracking wildcard (like `*` in old patterns).
  */
 export function spread(): Matcher {
-  const tryMatch: (tokens: Token[], from: number) => MatchResult = (tokens, from) => {
+  const tryMatch: (tokens: Token[], from: number) => MatchResult = (
+    tokens,
+    from,
+  ) => {
     for (let c = 0; c <= tokens.length - from; c++) {
       if (from + c === tokens.length) return { ok: true, consumed: c };
     }
     return { ok: false };
   };
-  return Object.assign(makeExact(tryMatch), { __spread: true } as { __spread: true });
+  return Object.assign(makeExact(tryMatch), { __spread: true } as {
+    __spread: true;
+  });
 }
 
 /**
@@ -175,11 +199,15 @@ export function spread(): Matcher {
 export function contains(...targets: Matcher[]): Matcher {
   const obj = makeExact((tokens, from) => {
     for (let pos = from; pos <= tokens.length; pos++) {
-      if (matchSeq(targets, tokens, 0, pos)) return { ok: true, consumed: tokens.length };
+      if (matchSeq(targets, tokens, 0, pos))
+        return { ok: true, consumed: tokens.length };
     }
     return { ok: false };
   });
   const tokenizer = getInnerTokenizer(targets);
-  if (tokenizer) return Object.assign(obj, { __tokenizer: tokenizer } as Matcher & { __tokenizer: Tokenizer });
+  if (tokenizer)
+    return Object.assign(obj, { __tokenizer: tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
   return obj;
 }
