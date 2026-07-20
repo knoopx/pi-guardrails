@@ -6,7 +6,7 @@ import { makeExact } from "./helpers.js";
  */
 export function word(...words: string[]): Matcher {
   const normalized = words.map((w) => w.toLowerCase());
-  return makeExact((tokens, from) => {
+  return makeExact((tokens: Token[], from: number) => {
     if (from >= tokens.length) return { ok: false };
     const val = tokens[from].value.toLowerCase();
     if (normalized.some((w) => val === w)) return { ok: true, consumed: 1 };
@@ -22,18 +22,22 @@ export function word(...words: string[]): Matcher {
 export function regex(...exprs: RegExp[]): Matcher {
   return Object.assign(
     {
-      match: (tokens) => tokens.some((t) => {
-        return exprs.some((expr) => {
-          expr.lastIndex = 0;
-          return expr.test(t.value);
-        });
-      }),
-      tryMatch: (tokens, from) => {
-        for (let i = from; i < tokens.length; i++) {
-          if (exprs.some((expr) => {
+      match: (tokens: Token[]) =>
+        tokens.some((t: Token) => {
+          return exprs.some((expr) => {
             expr.lastIndex = 0;
-            return expr.test(tokens[i].value);
-          })) return { ok: true, consumed: 1 };
+            return expr.test(t.value);
+          });
+        }),
+      tryMatch: (tokens: Token[], from: number) => {
+        for (let i = from; i < tokens.length; i++) {
+          if (
+            exprs.some((expr) => {
+              expr.lastIndex = 0;
+              return expr.test(tokens[i].value);
+            })
+          )
+            return { ok: true, consumed: 1 };
         }
         return { ok: false };
       },

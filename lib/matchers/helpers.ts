@@ -7,12 +7,15 @@ import type { Matcher, Token } from "./types.js";
  * Used by primitives, combos, and other matcher builders.
  */
 export function makeExact(
-  tryMatch: (tokens: Token[], from: number) => { ok: boolean; consumed?: number },
+  tryMatch: (
+    tokens: Token[],
+    from: number,
+  ) => { ok: boolean; consumed?: number },
 ): Matcher {
   return {
     match: (tokens) => {
       const r = tryMatch(tokens, 0);
-      return r.ok && 'consumed' in r && r.consumed === tokens.length;
+      return r.ok && "consumed" in r && r.consumed === tokens.length;
     },
     tryMatch,
   };
