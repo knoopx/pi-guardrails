@@ -30,29 +30,58 @@ function makeResult(
   } as unknown as ToolResultEvent;
 }
 
+// ── Helpers to eliminate duplicated context-setup ──────────────────────────────
+
+function makeBashBlockCtx(cmd: string, msg: string): GuardrailContext {
+  const ctx = new GuardrailContext();
+  ctx
+    .tool("bash")
+    .input("command", ctx.seq(ctx.bash.word(cmd), ctx.star()))
+    .block(msg);
+  return ctx;
+}
+
+function makeBashErrorCtx(pattern: RegExp, msg: string): GuardrailContext {
+  const ctx = new GuardrailContext();
+  ctx
+    .tool("bash")
+    .error(ctx.regex(pattern))
+    .block(msg);
+  return ctx;
+}
+
+async function assertSaveFailure(
+  loader: { enabled: boolean; save: ReturnType<typeof vi.fn> },
+  ctx: { ui: { notify: ReturnType<typeof vi.fn> } },
+  command: "on" | "off",
+  rejection: Error | string,
+  expectedEnabled: boolean,
+  expectedNotifyMessage: string,
+) {
+  (loader as any).save = vi.fn().mockRejectedValueOnce(rejection);
+
+  const handler = createGuardrailsHandler(loader as any);
+  await expect(handler(command, ctx as any)).rejects.toThrow(rejection);
+  expect(loader.enabled).toBe(expectedEnabled);
+  expect(ctx.ui.notify).toHaveBeenCalledWith(
+    expectedNotifyMessage,
+    "error",
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // handleToolCall
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("handleToolCall", () => {
   it("returns undefined when no rule matches", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
-
+    const ctx = makeBashBlockCtx("rm", "No rm");
     const result = handleToolCall(ctx, makeCall("bash", { command: "ls" }));
     expect(result).toBeUndefined();
   });
 
   it("returns block result when rule matches", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
-
+    const ctx = makeBashBlockCtx("rm", "No rm");
     const result = handleToolCall(
       ctx,
       makeCall("bash", { command: "rm foo.txt" }),
@@ -61,12 +90,7 @@ describe("handleToolCall", () => {
   });
 
   it("returns undefined when wrong tool name", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
-
+    const ctx = makeBashBlockCtx("rm", "No rm");
     const result = handleToolCall(
       ctx,
       makeCall("write", { path: "file.txt", content: "rm" }),
@@ -74,12 +98,8 @@ describe("handleToolCall", () => {
     expect(result).toBeUndefined();
   });
 
-  it("returns undefined when wrong tool name", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
+  it("returns first match when multiple rules apply", () => {
+    const ctx = makeBashBlockCtx("rm", "No rm");
     ctx
       .tool("bash")
       .input("command", ctx.seq(ctx.bash.word("sudo"), ctx.star()))
@@ -265,12 +285,7 @@ describe("handleToolError", () => {
 
 describe("createHandler", () => {
   it("provides handleCall, handleResult, handleError", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
-
+    const ctx = makeBashBlockCtx("rm", "No rm");
     const handler = createHandler(ctx);
     expect(typeof handler.handleCall).toBe("function");
     expect(typeof handler.handleResult).toBe("function");
@@ -278,12 +293,7 @@ describe("createHandler", () => {
   });
 
   it("handleCall returns block result", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
-      .block("No rm");
-
+    const ctx = makeBashBlockCtx("rm", "No rm");
     const handler = createHandler(ctx);
     const result = handler.handleCall(
       makeCall("bash", { command: "rm foo.txt" }),
@@ -307,12 +317,7 @@ describe("createHandler", () => {
   });
 
   it("handleError returns block on error match", () => {
-    const ctx = new GuardrailContext();
-    ctx
-      .tool("bash")
-      .error(ctx.regex(/segfault/i))
-      .block("Crash");
-
+    const ctx = makeBashErrorCtx(/segfault/i, "Crash");
     const handler = createHandler(ctx);
     const result = handler.handleError(
       makeResult("bash", { command: "x" }, "segfault", true),
@@ -327,17 +332,8 @@ describe("createHandler", () => {
 
 describe("composeContexts", () => {
   it("checks all contexts in order", () => {
-    const ctx1 = new GuardrailContext();
-    ctx1
-      .tool("bash")
-      .input("command", ctx1.seq(ctx1.bash.word("rm"), ctx1.star()))
-      .block("No rm");
-
-    const ctx2 = new GuardrailContext();
-    ctx2
-      .tool("bash")
-      .input("command", ctx2.seq(ctx2.bash.word("sudo"), ctx2.star()))
-      .block("No sudo");
+    const ctx1 = makeBashBlockCtx("rm", "No rm");
+    const ctx2 = makeBashBlockCtx("sudo", "No sudo");
 
     const composed = composeContexts(ctx1, ctx2);
     const result = composed.handleCall(
@@ -347,17 +343,8 @@ describe("composeContexts", () => {
   });
 
   it("returns first match, skips remaining contexts", () => {
-    const ctx1 = new GuardrailContext();
-    ctx1
-      .tool("bash")
-      .input("command", ctx1.seq(ctx1.bash.word("rm"), ctx1.star()))
-      .block("No rm");
-
-    const ctx2 = new GuardrailContext();
-    ctx2
-      .tool("bash")
-      .input("command", ctx2.seq(ctx2.bash.word("rm"), ctx2.star()))
-      .block("Second rm");
+    const ctx1 = makeBashBlockCtx("rm", "No rm");
+    const ctx2 = makeBashBlockCtx("rm", "Second rm");
 
     const composed = composeContexts(ctx1, ctx2);
     const result = composed.handleCall(
@@ -368,29 +355,15 @@ describe("composeContexts", () => {
   });
 
   it("returns undefined when no context matches", () => {
-    const ctx1 = new GuardrailContext();
-    ctx1
-      .tool("bash")
-      .input("command", ctx1.seq(ctx1.bash.word("rm"), ctx1.star()))
-      .block("No rm");
-
+    const ctx1 = makeBashBlockCtx("rm", "No rm");
     const composed = composeContexts(ctx1);
     const result = composed.handleCall(makeCall("bash", { command: "ls" }));
     expect(result).toBeUndefined();
   });
 
   it("composes error handlers", () => {
-    const ctx1 = new GuardrailContext();
-    ctx1
-      .tool("bash")
-      .error(ctx1.regex(/segfault/i))
-      .block("Crash");
-
-    const ctx2 = new GuardrailContext();
-    ctx2
-      .tool("bash")
-      .error(ctx2.regex(/out of memory/i))
-      .block("OOM");
+    const ctx1 = makeBashErrorCtx(/segfault/i, "Crash");
+    const ctx2 = makeBashErrorCtx(/out of memory/i, "OOM");
 
     const composed = composeContexts(ctx1, ctx2);
     const result = composed.handleError(
@@ -422,12 +395,7 @@ describe("composeContexts", () => {
   });
 
   it("handles multiple contexts with different tool names", () => {
-    const ctx1 = new GuardrailContext();
-    ctx1
-      .tool("bash")
-      .input("command", ctx1.seq(ctx1.bash.word("rm"), ctx1.star()))
-      .block("No rm");
-
+    const ctx1 = makeBashBlockCtx("rm", "No rm");
     const ctx2 = new GuardrailContext();
     ctx2.tool("write").input("path", ctx2.glob("*.env")).block("No env");
 
@@ -526,6 +494,50 @@ describe("createGuardrailsHandler", () => {
     const handler = createGuardrailsHandler(mockLoader as any);
     await expect(handler("foobar", mockCtx as any)).rejects.toThrow(
       /Invalid guardrails command/,
+    );
+  });
+
+  it("catches Error on save failure (on path)", async () => {
+    assertSaveFailure(
+      mockLoader,
+      mockCtx,
+      "on",
+      new Error("disk full"),
+      true,
+      "Failed to persist guardrails state: disk full",
+    );
+  });
+
+  it("catches non-Error string on save failure (on path)", async () => {
+    assertSaveFailure(
+      mockLoader,
+      mockCtx,
+      "on",
+      "unknown error",
+      true,
+      "Failed to persist guardrails state: unknown error",
+    );
+  });
+
+  it("catches Error on save failure (off path)", async () => {
+    assertSaveFailure(
+      mockLoader,
+      mockCtx,
+      "off",
+      new Error("IO error"),
+      false,
+      "Failed to persist guardrails state: IO error",
+    );
+  });
+
+  it("catches non-Error string on save failure (off path)", async () => {
+    assertSaveFailure(
+      mockLoader,
+      mockCtx,
+      "off",
+      "network error",
+      false,
+      "Failed to persist guardrails state: network error",
     );
   });
 });

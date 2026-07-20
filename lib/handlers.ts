@@ -12,36 +12,44 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
  * Create a command handler for the `/guardrails` command.
  * Toggles guardrails on or off via the config loader.
  */
+async function setEnabledAndNotify(
+  configLoader: GuardrailsConfigLoader,
+  enabled: boolean,
+  successMessage: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  configLoader.enabled = enabled;
+  try {
+    await configLoader.save();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(
+      `Failed to persist guardrails state: ${message}`,
+      "error",
+    );
+    throw err;
+  }
+  ctx.ui.notify(successMessage, "info");
+}
+
 export function createGuardrailsHandler(
   configLoader: GuardrailsConfigLoader,
 ): (args: string, ctx: ExtensionCommandContext) => Promise<void> {
   return async (args: string, ctx) => {
     if (args === "on") {
-      configLoader.enabled = true;
-      try {
-        await configLoader.save();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(
-          `Failed to persist guardrails state: ${message}`,
-          "error",
-        );
-        throw err;
-      }
-      ctx.ui.notify("Guardrails enabled", "info");
+      await setEnabledAndNotify(
+        configLoader,
+        true,
+        "Guardrails enabled",
+        ctx,
+      );
     } else if (args === "off") {
-      configLoader.enabled = false;
-      try {
-        await configLoader.save();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(
-          `Failed to persist guardrails state: ${message}`,
-          "error",
-        );
-        throw err;
-      }
-      ctx.ui.notify("Guardrails disabled", "info");
+      await setEnabledAndNotify(
+        configLoader,
+        false,
+        "Guardrails disabled",
+        ctx,
+      );
     } else {
       throw new Error(
         `Invalid guardrails command: "${args}". Use /guardrails [on|off]`,
