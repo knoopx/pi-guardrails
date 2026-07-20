@@ -5,15 +5,7 @@ import type {
   TextContent,
   ImageContent,
 } from "./events.js";
-import type {
-  GuardrailAction,
-  Timing,
-  PreExecutionRule,
-  PostExecutionRule,
-  ErrorRule,
-  InputCondition,
-  RewriteFn,
-} from "./rules.js";
+import type { RewriteFn } from "./rules.js";
 import { word } from "../matchers/index.js";
 
 /** Builder context after `.tool(name)`. */
@@ -62,30 +54,9 @@ export interface PostExecutionActionBuilder {
   input(key: string, matcher: Matcher): PostExecutionActionBuilder;
 }
 
-/** Timing builder for pre/post rules. */
-export interface TimingBuilder {
-  before: ActionBuilder;
-  after: ActionBuilder;
-}
-
-/** Action builder for pre/post rules. */
-export interface ActionBuilder {
-  block(reason: string): void;
-  confirm(reason: string): void;
-  input(key: string, matcher: Matcher): ActionBuilder;
-}
-
 /** Builder for tokenized matchers (bash/nu/sql). */
 export interface MatcherBuilder {
   word: (...words: string[]) => Matcher;
-}
-
-/** Rewrite builder for transforming properties. */
-export interface RewriteActionBuilder {
-  command: (fn: RewriteFn) => RewriteActionBuilder;
-  output: (fn: RewriteFn) => RewriteActionBuilder;
-  file_path: (fn: RewriteFn) => RewriteActionBuilder;
-  path: (fn: RewriteFn) => RewriteActionBuilder;
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -97,112 +68,10 @@ export function tagged(matcher: Matcher, tokenizer: Tokenizer): Matcher {
   });
 }
 
-/** Create a rewrite builder. */
-export function createRewriteBuilder(): RewriteActionBuilder {
-  const builders: Map<string, RewriteFn> = new Map();
-
-  const builder: RewriteActionBuilder = {
-    command: (fn: RewriteFn) => {
-      builders.set("command", fn);
-      return builder;
-    },
-    output: (fn: RewriteFn) => {
-      builders.set("output", fn);
-      return builder;
-    },
-    file_path: (fn: RewriteFn) => {
-      builders.set("file_path", fn);
-      return builder;
-    },
-    path: (fn: RewriteFn) => {
-      builders.set("path", fn);
-      return builder;
-    },
-  };
-
-  return builder;
-}
-
 /** Create a matcher builder for a tokenizer. */
 export function createMatcherBuilder(tokenizer: Tokenizer): MatcherBuilder {
   return {
     word: (...words: string[]) => tagged(word(...words), tokenizer),
-  };
-}
-
-/** Create a timing builder. */
-export function createTimingBuilder({
-  preRules,
-  postRules,
-  conditions,
-  toolName,
-  isPost = false,
-}: {
-  preRules: PreExecutionRule[];
-  postRules: PostExecutionRule[];
-  conditions: InputCondition[];
-  toolName: string;
-  isPost?: boolean;
-}): TimingBuilder {
-  const addPreRule = (
-    action: GuardrailAction,
-    reason?: string,
-    command?: string,
-  ) => {
-    preRules.push({
-      toolName,
-      inputConditions: [...conditions],
-      timing: "before",
-      action: action as "block" | "confirm" | "run",
-      reason,
-      command,
-    });
-  };
-
-  const addPostRule = (
-    action: GuardrailAction,
-    reason?: string,
-    command?: string,
-    rewriteFn?: RewriteFn,
-    outputMatcher?: Matcher,
-  ) => {
-    postRules.push({
-      toolName,
-      inputConditions: [...conditions],
-      outputMatcher: outputMatcher ?? null,
-      timing: "after",
-      action,
-      reason,
-      command,
-      rewriteFn,
-    });
-  };
-
-  return {
-    before: createActionBuilder({ addRule: addPreRule }),
-    after: createActionBuilder({ addRule: addPostRule }),
-  };
-}
-
-function createActionBuilder({
-  addRule,
-}: {
-  addRule: (action: GuardrailAction, reason?: string, command?: string) => void;
-}): ActionBuilder {
-  const conditions: InputCondition[] = [];
-  let outputMatcher: Matcher | undefined;
-
-  return {
-    block(reason: string) {
-      addRule("block", reason);
-    },
-    confirm(reason: string) {
-      addRule("confirm", reason);
-    },
-    input(key: string, matcher: Matcher) {
-      conditions.push({ key, matcher });
-      return this;
-    },
   };
 }
 

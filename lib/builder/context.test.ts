@@ -116,6 +116,42 @@ describe("GuardrailContext — pre-execution rules", () => {
     expect(result).toBeUndefined();
   });
 
+  it("blocks rm after &&", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .block("Blocked");
+
+    const result = ctx.matchCall(
+      makeCall("bash", { command: "cd /tmp && rm -rf ." }),
+    );
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks rm after ;", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .block("Blocked");
+
+    const result = ctx.matchCall(
+      makeCall("bash", { command: "echo hello; rm -rf /" }),
+    );
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks rm after ||", () => {
+    ctx
+      .tool("bash")
+      .input("command", ctx.seq(ctx.bash.word("rm"), ctx.star()))
+      .block("Blocked");
+
+    const result = ctx.matchCall(
+      makeCall("bash", { command: "ls || rm -rf ." }),
+    );
+    expect(result).toMatchObject({ block: true });
+  });
+
   it("matches nushell ls -R (nu-syntax guardrail)", () => {
     ctx
       .tool("nu-eval")

@@ -25,27 +25,6 @@ export type RewriteFn = (
   event: ToolResultEvent,
 ) => ToolResultEventResult | undefined;
 
-/** Builder for rewriting PI ToolResultEventResult properties. */
-export interface RewriteBuilder {
-  /** Transform all text content. */
-  text(fn: (text: string) => string): RewriteBuilder;
-  /** Transform a specific content index. */
-  content(
-    fn: (
-      index: number,
-      content: TextContent | ImageContent,
-    ) => TextContent | ImageContent,
-  ): RewriteBuilder;
-  /** Set block flag. */
-  block(value: boolean): RewriteBuilder;
-  /** Set reason string. */
-  reason(value: string): RewriteBuilder;
-  /** Set details. */
-  details(value: unknown): RewriteBuilder;
-  /** Execute the rewrite against an event, returning the modified result or undefined. */
-  apply(event: ToolResultEvent): ToolResultEventResult | undefined;
-}
-
 /** Single input condition for a rule. */
 export interface InputCondition {
   key: string;

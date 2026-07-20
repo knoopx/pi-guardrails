@@ -3,9 +3,6 @@ import { configLoader } from "./lib/config/loader.js";
 import { createGuardrailsHandler } from "./lib/handlers.js";
 import { GuardrailContext } from "./lib/builder/context.js";
 
-export type { GuardrailContext } from "./lib/builder/context.js";
-export type { ErrorRule } from "./lib/builder/rules.js";
-
 /**
  * SDK entry point: pass a builder callback and get a configured PI extension.
  *
@@ -20,7 +17,7 @@ export type { ErrorRule } from "./lib/builder/rules.js";
  * });
  * ```
  */
-export function guardrails(rules: (ctx: GuardrailContext) => void) {
+function guardrails(rules: (ctx: GuardrailContext) => void) {
   return async function extension(pi: ExtensionAPI) {
     await configLoader.load();
 

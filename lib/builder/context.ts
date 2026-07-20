@@ -16,7 +16,6 @@ import type {
 } from "./rules.js";
 import type {
   ToolMatcherBuilder,
-  ActionBuilder,
   PostExecutionActionBuilder,
   MatcherBuilder,
   ErrorActionBuilder,
@@ -115,27 +114,6 @@ export class GuardrailContext {
 
   anyToken(): Matcher {
     return anyToken();
-  }
-  path(): Matcher {
-    return path();
-  }
-  repeat(m: Matcher): Matcher {
-    return repeat(m);
-  }
-  repeat1(m: Matcher): Matcher {
-    return repeat1(m);
-  }
-  opt(m: Matcher): Matcher {
-    return opt(m);
-  }
-  exact(n: number): Matcher {
-    return exact(n);
-  }
-  prefixed(prefix: string): Matcher {
-    return prefixed(prefix);
-  }
-  anyOf(...matchers: Matcher[]): Matcher {
-    return anyOf(...matchers);
   }
   seq(...matchers: Matcher[]): Matcher {
     return seq(...matchers);
@@ -395,7 +373,9 @@ export class GuardrailContext {
 
     const segments = (m.__tokenizer ?? tokenizeBash)(text);
     if (segments.length === 0) return false;
-    return m.match(segments[0]);
+    // Check all command segments (e.g., "cd dir && rm file" has two segments).
+    // Any segment matching is sufficient to trigger the rule.
+    return segments.some((seg) => m.match(seg));
   }
 
   private handlePostAction(
@@ -513,7 +493,9 @@ export class GuardrailContext {
       const m = matcher as Matcher & { __tokenizer: Tokenizer };
       const segments = (m.__tokenizer ?? tokenizeBash)(text);
       if (segments.length === 0) return false;
-      if (!matcher.match(segments[0])) return false;
+      // Check all command segments (e.g., "cd dir && rm file" has two segments).
+      // If none match, this condition fails.
+      if (!segments.some((seg) => matcher.match(seg))) return false;
     }
     return true;
   }
