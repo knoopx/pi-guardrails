@@ -6,7 +6,9 @@ describe("GuardrailsConfigLoader", () => {
   let loader: GuardrailsConfigLoader;
 
   beforeEach(() => {
-    vi.spyOn(settings, "loadEnabledSetting").mockResolvedValue({ enabled: true });
+    vi.spyOn(settings, "loadEnabledSetting").mockResolvedValue({
+      enabled: true,
+    });
     vi.spyOn(settings, "saveEnabledSetting").mockResolvedValue(undefined);
     loader = new GuardrailsConfigLoader();
   });
@@ -21,15 +23,16 @@ describe("GuardrailsConfigLoader", () => {
 
   it("loads enabled state from settings", async () => {
     await loader.load();
-    expect(settings.loadEnabledSetting).toHaveBeenCalledWith(
-      "guardrails",
-      { enabled: true },
-    );
+    expect(settings.loadEnabledSetting).toHaveBeenCalledWith("guardrails", {
+      enabled: true,
+    });
     expect(loader.enabled).toBe(true);
   });
 
   it("loads disabled state from settings", async () => {
-    vi.spyOn(settings, "loadEnabledSetting").mockResolvedValue({ enabled: false });
+    vi.spyOn(settings, "loadEnabledSetting").mockResolvedValue({
+      enabled: false,
+    });
     await loader.load();
     expect(loader.enabled).toBe(false);
   });

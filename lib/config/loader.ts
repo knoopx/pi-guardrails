@@ -29,17 +29,23 @@ export class GuardrailsConfigLoader {
   }
 
   async load(): Promise<void> {
-    this.enabledRef.value = (await loadEnabledSetting(
-      GUARDRAILS_SETTINGS_KEY,
-      DEFAULT_GUARDRAILS_SETTINGS,
-    )).enabled;
+    this.enabledRef.value = (
+      await loadEnabledSetting(
+        GUARDRAILS_SETTINGS_KEY,
+        DEFAULT_GUARDRAILS_SETTINGS,
+      )
+    ).enabled;
   }
 
   async save(): Promise<void> {
     await saveEnabledSetting(
       GUARDRAILS_SETTINGS_KEY,
       { enabled: this.enabledRef.value },
-      () => loadEnabledSetting(GUARDRAILS_SETTINGS_KEY, DEFAULT_GUARDRAILS_SETTINGS),
+      () =>
+        loadEnabledSetting(
+          GUARDRAILS_SETTINGS_KEY,
+          DEFAULT_GUARDRAILS_SETTINGS,
+        ),
     );
   }
 }
