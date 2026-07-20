@@ -1,8 +1,45 @@
 import { describe, it, expect } from "vitest";
 import { tokenizeSql } from "./sql";
+import type { Token } from "../types.js";
 
 function token(type: string, value: string) {
   return { type, value };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+function expectTokenize(sql: string, tokens: Token[]) {
+  expect(tokenizeSql(sql)).toEqual([tokens]);
+}
+
+function expectReadCsvAutoOption(option: string) {
+  expectTokenize(`SELECT * FROM read_csv_auto('file.csv', ${option} = true)`, [
+    token("word", "SELECT"),
+    token("word", "*"),
+    token("word", "FROM"),
+    token("word", "read_csv_auto"),
+    token("operator", "("),
+    token("string", "file.csv"),
+    token("operator", ","),
+    token("word", option),
+    token("operator", "="),
+    token("word", "true"),
+    token("paren", ")"),
+  ]);
+}
+
+function expectRegexpFn(fn: string) {
+  expectTokenize(`SELECT ${fn}(col, 'pattern')`, [
+    token("word", "SELECT"),
+    token("word", fn),
+    token("operator", "("),
+    token("word", "col"),
+    token("operator", ","),
+    token("string", "pattern"),
+    token("paren", ")"),
+  ]);
 }
 
 describe("tokenizeSql", () => {
@@ -396,53 +433,15 @@ describe("tokenizeSql", () => {
   });
 
   describe("guardrail: regexp_like", () => {
-    it("tokenizes regexp_like", () => {
-      expect(tokenizeSql("SELECT regexp_like(col, 'pattern')")).toEqual([
-        [
-          token("word", "SELECT"),
-          token("word", "regexp_like"),
-          token("operator", "("),
-          token("word", "col"),
-          token("operator", ","),
-          token("string", "pattern"),
-          token("paren", ")"),
-        ],
-      ]);
-    });
+    it("tokenizes regexp_like", () => expectRegexpFn("regexp_like"));
   });
 
   describe("guardrail: regexp_count", () => {
-    it("tokenizes regexp_count", () => {
-      expect(tokenizeSql("SELECT regexp_count(col, 'pattern')")).toEqual([
-        [
-          token("word", "SELECT"),
-          token("word", "regexp_count"),
-          token("operator", "("),
-          token("word", "col"),
-          token("operator", ","),
-          token("string", "pattern"),
-          token("paren", ")"),
-        ],
-      ]);
-    });
+    it("tokenizes regexp_count", () => expectRegexpFn("regexp_count"));
   });
 
   describe("guardrail: regexp_split_to_table", () => {
-    it("tokenizes regexp_split_to_table", () => {
-      expect(
-        tokenizeSql("SELECT regexp_split_to_table(col, 'pattern')"),
-      ).toEqual([
-        [
-          token("word", "SELECT"),
-          token("word", "regexp_split_to_table"),
-          token("operator", "("),
-          token("word", "col"),
-          token("operator", ","),
-          token("string", "pattern"),
-          token("paren", ")"),
-        ],
-      ]);
-    });
+    it("tokenizes regexp_split_to_table", () => expectRegexpFn("regexp_split_to_table"));
   });
 
   describe("guardrail: COPY TO", () => {
@@ -585,51 +584,11 @@ describe("tokenizeSql", () => {
   });
 
   describe("guardrail: OVERWRITE_TRUE", () => {
-    it("tokenizes OVERWRITE_TRUE", () => {
-      expect(
-        tokenizeSql(
-          "SELECT * FROM read_csv_auto('file.csv', OVERWRITE_TRUE = true)",
-        ),
-      ).toEqual([
-        [
-          token("word", "SELECT"),
-          token("word", "*"),
-          token("word", "FROM"),
-          token("word", "read_csv_auto"),
-          token("operator", "("),
-          token("string", "file.csv"),
-          token("operator", ","),
-          token("word", "OVERWRITE_TRUE"),
-          token("operator", "="),
-          token("word", "true"),
-          token("paren", ")"),
-        ],
-      ]);
-    });
+    it("tokenizes OVERWRITE_TRUE", () => expectReadCsvAutoOption("OVERWRITE_TRUE"));
   });
 
   describe("guardrail: union_by_name", () => {
-    it("tokenizes union_by_name", () => {
-      expect(
-        tokenizeSql(
-          "SELECT * FROM read_csv_auto('file.csv', union_by_name = true)",
-        ),
-      ).toEqual([
-        [
-          token("word", "SELECT"),
-          token("word", "*"),
-          token("word", "FROM"),
-          token("word", "read_csv_auto"),
-          token("operator", "("),
-          token("string", "file.csv"),
-          token("operator", ","),
-          token("word", "union_by_name"),
-          token("operator", "="),
-          token("word", "true"),
-          token("paren", ")"),
-        ],
-      ]);
-    });
+    it("tokenizes union_by_name", () => expectReadCsvAutoOption("union_by_name"));
   });
 
   describe("guardrail: substr + unnest", () => {

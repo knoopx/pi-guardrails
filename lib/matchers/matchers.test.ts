@@ -374,3 +374,161 @@ describe("integration: guardrail patterns", () => {
     expect(m.match(t(["podman", "ps"]))).toBe(false);
   });
 });
+
+describe("spread deep backtracking", () => {
+  it("spread matches zero tokens between two fixed words", () => {
+    const m = seq(word("a"), spread(), word("b"));
+    expect(m.match(t(["a", "b"]))).toBe(true);
+  });
+
+  it("spread matches all tokens between two fixed words", () => {
+    const m = seq(word("a"), spread(), word("b"));
+    expect(m.match(t(["a", "x", "y", "z", "b"]))).toBe(true);
+  });
+
+  it("spread returns false when target not at end", () => {
+    const m = seq(word("a"), spread(), word("b"));
+    expect(m.match(t(["a", "x", "y"]))).toBe(false);
+  });
+
+  it("spread with star after target", () => {
+    const m = seq(word("a"), spread(), word("b"), star());
+    expect(m.match(t(["a", "x", "b", "c"]))).toBe(true);
+  });
+});
+
+describe("repeat1 edge cases", () => {
+  it("returns ok:false when first match fails", () => {
+    const m = repeat1(word("rm"));
+    expect(m.match(t(["ls"]))).toBe(false);
+  });
+
+  it("handles firstConsumed === 0 edge case", () => {
+    // Create a matcher that matches but consumes 0 tokens
+    const zeroConsumingMatcher = {
+      match: (tokens: any[]) => tokens.length > 0,
+      tryMatch: (tokens: any[], from: number) => {
+        if (from < tokens.length) return { ok: true, consumed: 0 };
+        return { ok: false };
+      },
+    };
+    const m = repeat1(zeroConsumingMatcher);
+    // First match succeeds but consumed=0, so repeat1 returns { ok: true, consumed: 0 }.
+    // makeExact checks consumed === tokens.length: 0 !== 1 → false.
+    // On empty tokens: first tryMatch fails (from >= tokens.length) → ok: false → match: false.
+    expect(m.match([])).toBe(false);
+    expect(m.match(t(["a"]))).toBe(false);
+  });
+
+  it("repeats until no more matches", () => {
+    const m = repeat1(word("-"));
+    expect(m.match(t(["-", "-", "-"]))).toBe(true);
+  });
+});
+
+describe("exact edge cases", () => {
+  it("fails when n exceeds token length", () => {
+    const m = exact(5);
+    expect(m.match(t(["a", "b", "c"]))).toBe(false);
+  });
+
+  it("matches n=0", () => {
+    const m = exact(0);
+    expect(m.match([])).toBe(true);
+  });
+
+  it("fails for n=0 when tokens exist", () => {
+    const m = exact(0);
+    expect(m.match(t(["a"]))).toBe(false);
+  });
+});
+
+describe("contains tryMatch", () => {
+  it("tryMatch finds target and returns consumed=tokens.length", () => {
+    const m = contains(word("SELECT"));
+    const result = m.tryMatch(t(["FROM", "SELECT", "FROM"]), 0);
+    expect(result).toEqual({ ok: true, consumed: 3 });
+  });
+
+  it("tryMatch returns ok:false when target not found", () => {
+    const m = contains(word("SELECT"));
+    const result = m.tryMatch(t(["FROM", "INSERT"]), 0);
+    expect(result).toEqual({ ok: false });
+  });
+
+  it("tryMatch starts from given offset", () => {
+    const m = contains(word("FROM"));
+    const result = m.tryMatch(t(["SELECT", "FROM"]), 1);
+    expect(result).toEqual({ ok: true, consumed: 2 });
+  });
+
+  it("tryMatch returns ok:false when target is before offset", () => {
+    const m = contains(word("SELECT"));
+    const result = m.tryMatch(t(["SELECT", "FROM"]), 1);
+    // SELECT is at position 0, offset is 1, so it won't find it starting from 1
+    expect(result).toEqual({ ok: false });
+  });
+});
+
+describe("seq with nested spread/star/repeat backtracking", () => {
+  it("backtracks when spread fails to find next matcher", () => {
+    const m = seq(word("a"), spread(), word("b"), spread(), word("c"));
+    expect(m.match(t(["a", "b", "c"]))).toBe(true);
+  });
+
+  it("repeat backtracks when following matcher fails", () => {
+    const m = seq(word("a"), repeat(word("x")), word("b"));
+    expect(m.match(t(["a", "x", "x", "b"]))).toBe(true);
+    expect(m.match(t(["a", "x", "x"]))).toBe(false);
+  });
+
+  it("star backtracks when following matcher needs tokens", () => {
+    const m = seq(word("a"), star(), word("b"));
+    expect(m.match(t(["a", "x", "y", "b"]))).toBe(true);
+    expect(m.match(t(["a", "x", "y"]))).toBe(false);
+  });
+});
+
+describe("prefixed edge cases", () => {
+  it("prefixed with multiple words matches first word only", () => {
+    // prefixed("git", "commit") should match "git commit -m msg"
+    // but also "git status" because star() after the word sequence
+    // allows anything after the prefix words
+    const m = prefixed("git", "commit");
+    expect(m.match(t(["git", "commit", "-m", "msg"]))).toBe(true);
+    expect(m.match(t(["git", "status"]))).toBe(true);
+  });
+});
+
+describe("seq with getInnerTokenizer returns undefined", () => {
+  it("seq without tokenizer returns no __tokenizer", () => {
+    const m = seq(word("a"), word("b"));
+    expect((m as any).__tokenizer).toBeUndefined();
+  });
+
+  it("anyOf without tokenizer returns no __tokenizer", () => {
+    const m = anyOf(word("a"), word("b"));
+    expect((m as any).__tokenizer).toBeUndefined();
+  });
+
+  it("repeat without tokenizer returns no __tokenizer but has __repeat", () => {
+    const m = repeat(word("a"));
+    expect((m as any).__tokenizer).toBeUndefined();
+    expect((m as any).__repeat).toBe(true);
+  });
+
+  it("repeat1 without tokenizer returns no __tokenizer", () => {
+    const m = repeat1(word("a"));
+    expect((m as any).__tokenizer).toBeUndefined();
+  });
+
+  it("opt without tokenizer returns no __tokenizer", () => {
+    const m = opt(word("a"));
+    expect((m as any).__tokenizer).toBeUndefined();
+  });
+
+  it("contains without tokenizer returns no __tokenizer", () => {
+    const m = contains(word("a"));
+    expect((m as any).__tokenizer).toBeUndefined();
+  });
+});

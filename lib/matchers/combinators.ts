@@ -11,6 +11,16 @@ function getInnerTokenizer(ms: Matcher[]): Tokenizer | undefined {
   return undefined;
 }
 
+/** Tag a matcher with its inner matcher's tokenizer, if present. */
+function tagInnerTokenizer(obj: Matcher, m: Matcher): Matcher {
+  const tagged = m as Matcher & { __tokenizer?: Tokenizer };
+  if (tagged.__tokenizer)
+    return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & {
+      __tokenizer: Tokenizer;
+    });
+  return obj;
+}
+
 /** Start with given word(s), then anything. */
 export function prefixed(...cmdWords: string[]): Matcher {
   return seq(word(...cmdWords), star());
@@ -132,12 +142,7 @@ export function repeat1(m: Matcher): Matcher {
     }
     return { ok: true, consumed: pos - from };
   });
-  const tagged = m as Matcher & { __tokenizer?: Tokenizer };
-  if (tagged.__tokenizer)
-    return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & {
-      __tokenizer: Tokenizer;
-    });
-  return obj;
+  return tagInnerTokenizer(obj, m);
 }
 
 /**
@@ -148,12 +153,7 @@ export function opt(m: Matcher): Matcher {
     const r = m.tryMatch(tokens, from);
     return r.ok ? r : { ok: true, consumed: 0 };
   });
-  const tagged = m as Matcher & { __tokenizer?: Tokenizer };
-  if (tagged.__tokenizer)
-    return Object.assign(obj, { __tokenizer: tagged.__tokenizer } as Matcher & {
-      __tokenizer: Tokenizer;
-    });
-  return obj;
+  return tagInnerTokenizer(obj, m);
 }
 
 /**
